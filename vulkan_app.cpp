@@ -380,6 +380,31 @@ void vulkan_app::createGraphicsPipeline() {
     throw std::runtime_error("Failed to create pipeline layout!");
   }
 
+  VkGraphicsPipelineCreateInfo pipelineInfo{};
+  pipelineInfo.sType      = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+  pipelineInfo.stageCount = 2;
+
+  // inhale all that shit we just made into the pipeline struct
+  pipelineInfo.pStages             = shaderStages;
+  pipelineInfo.pVertexInputState   = &vertexInputInfo;
+  pipelineInfo.pInputAssemblyState = &inputAssembly;
+  pipelineInfo.pViewportState      = &viewportState;
+  pipelineInfo.pRasterizationState = &rasterizer;
+  pipelineInfo.pMultisampleState   = &multisampling;
+  pipelineInfo.pDepthStencilState  = nullptr; // Optional
+  pipelineInfo.pColorBlendState    = &colorBlending;
+  pipelineInfo.pDynamicState       = nullptr; // Optional
+
+  pipelineInfo.layout = pipelineLayout;
+
+  pipelineInfo.renderPass = renderPass;
+  // index of the subpass where the pipeline will be used
+  pipelineInfo.subpass = 0;
+  // TODO: look at basePipelineHandle
+  if (vkCreateGraphicsPipelines(logicalDevice, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr,
+                                &graphicsPipeline) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to create graphics pipeline!");
+  }
   // compilation of the shaders to machine code doesn't happen until the graphics pipeline
   // gets created, so we can throw these away without consequence
   vkDestroyShaderModule(logicalDevice, fragShaderModule, nullptr);
@@ -387,6 +412,7 @@ void vulkan_app::createGraphicsPipeline() {
 }
 
 void vulkan_app::createRenderPass() {
+  // make a color buffer
   VkAttachmentDescription colorAttachment{};
   colorAttachment.format  = swapChainImageFormat;
   colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -413,9 +439,23 @@ void vulkan_app::createRenderPass() {
   VkSubpassDescription subpass{};
   // you can also bind this to compute. Very interesting...
   subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-
+  // The index of the attachment in this array is directly referenced from the fragment
+  // shader with the layout(location = 0) out vec4 outColor directive!
   subpass.colorAttachmentCount = 1;
   subpass.pColorAttachments    = &colorAttachmentRef;
+
+  VkRenderPassCreateInfo renderPassInfo{};
+  renderPassInfo.sType           = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+  renderPassInfo.attachmentCount = 1;
+  renderPassInfo.pAttachments    = &colorAttachment;
+  renderPassInfo.subpassCount    = 1;
+  renderPassInfo.pSubpasses      = &subpass;
+
+  // create the render pass, panic if we can't
+  if (vkCreateRenderPass(logicalDevice, &renderPassInfo, nullptr, &renderPass) !=
+      VK_SUCCESS) {
+    throw std::runtime_error("failed to create render pass!");
+  }
 }
 
 VkShaderModule vulkan_app::createShaderModule(const std::vector<char> code) {
@@ -593,8 +633,11 @@ void vulkan_app::mainLoop() {
 }
 
 void vulkan_app::cleanup() {
+  // kill the pipeline
+  vkDestroyPipeline(logicalDevice, graphicsPipeline, nullptr);
   // kill the pipeline layout
   vkDestroyPipelineLayout(logicalDevice, pipelineLayout, nullptr);
+  vkDestroyRenderPass(logicalDevice, renderPass, nullptr);
   // kill all the image views we made in createImageViews()
   for (auto imageView : swapChainImageViews) {
     vkDestroyImageView(logicalDevice, imageView, nullptr);

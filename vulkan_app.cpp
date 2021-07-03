@@ -26,14 +26,20 @@ void vulkan_app::initVulkan() {
   createImageViews();
   createRenderPass();
   createGraphicsPipeline();
+  createFramebuffers();
+  createCommandPool();
+  createCommandBuffers();
+  createSyncObjects();
 }
 
+// make a surface to draw on
 void vulkan_app::createSurface() {
   if (glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS) {
     throw std::runtime_error("Failed to create window surface!");
   }
 }
 
+// used for reading shaders into a usable format
 std::vector<char> vulkan_app::readFile(const std::string &filename) {
   // read it in as binary, and start from the back so we can get the size of the file
   std::ifstream file(filename, std::ios::ate | std::ios::binary);
@@ -86,6 +92,7 @@ vulkan_app::querySwapChainSupport(VkPhysicalDevice device) {
   return details;
 }
 
+// create a vulkan context from the gpu
 void vulkan_app::createLogicalDevice() {
   // queue creation bullshit
   QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
@@ -141,6 +148,7 @@ void vulkan_app::createLogicalDevice() {
   vkGetDeviceQueue(logicalDevice, indices.presentFamily.value(), 0, &presentQueue);
 }
 
+// make the swapchain, the holy grail of image presentation
 void vulkan_app::createSwapChain() {
 
   SwapChainSupportDetails swapChainSupport = querySwapChainSupport(physicalDevice);
@@ -219,6 +227,7 @@ void vulkan_app::createSwapChain() {
   swapChainExtent      = extent;
 }
 
+// tell the context what the fuck we're using the images for
 void vulkan_app::createImageViews() {
   // make the imageviews list as big as the actual swapchain
   swapChainImageViews.resize(swapChainImages.size());
@@ -252,6 +261,75 @@ void vulkan_app::createImageViews() {
   }
 }
 
+// bundle our render operations into a renderpass
+void vulkan_app::createRenderPass() {
+  // make a color buffer
+  VkAttachmentDescription colorAttachment{};
+  colorAttachment.format  = swapChainImageFormat;
+  colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+
+  // clear the framebuffer to black before drawing a new frame
+  colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+  // store the rendered shit in memory so it can... be rendered
+  colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+
+  // not using stencils, so we don't give a shit about the load and store
+  colorAttachment.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+  colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+
+  // we don't care what the previous layout of the image was
+  colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  // we're using the image to be presented
+  colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+  // TODO: Understand attachment references and subpasses. Brain hurty, no sleepy.
+  VkAttachmentReference colorAttachmentRef{};
+  colorAttachmentRef.attachment = 0;
+  colorAttachmentRef.layout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+  VkSubpassDescription subpass{};
+  // you can also bind this to compute. Very interesting...
+  subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+  // The index of the attachment in this array is directly referenced from the fragment
+  // shader with the layout(location = 0) out vec4 outColor directive!
+  subpass.colorAttachmentCount = 1;
+  subpass.pColorAttachments    = &colorAttachmentRef;
+
+  // specify memory and execution dependencies between subpasses. Have to do this because
+  // of the transition at the start of render time from no image -> image
+  VkSubpassDependency dependency{};
+  // index of the dependency
+  dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+  // index of the dependent subpass
+  dependency.dstSubpass = 0;
+
+  // wait on the swapchain to finish reading the image before allowing the dependent to
+  // access it
+  dependency.srcStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+  dependency.srcAccessMask = 0;
+
+  // what should the dependency wait to do? in this case, coloring!
+  dependency.dstStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+  dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+  VkRenderPassCreateInfo renderPassInfo{};
+  renderPassInfo.sType           = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+  renderPassInfo.attachmentCount = 1;
+  renderPassInfo.pAttachments    = &colorAttachment;
+  renderPassInfo.subpassCount    = 1;
+  renderPassInfo.pSubpasses      = &subpass;
+  // what dependencies do we got?
+  renderPassInfo.dependencyCount = 1;
+  renderPassInfo.pDependencies   = &dependency;
+
+  // create the render pass, panic if we can't
+  if (vkCreateRenderPass(logicalDevice, &renderPassInfo, nullptr, &renderPass) !=
+      VK_SUCCESS) {
+    throw std::runtime_error("failed to create render pass!");
+  }
+}
+
+// make the chonky boi
 void vulkan_app::createGraphicsPipeline() {
   auto vertShaderCode = readFile("shaders/shader.vert.spv");
   auto fragShaderCode = readFile("shaders/shader.frag.spv");
@@ -411,53 +489,219 @@ void vulkan_app::createGraphicsPipeline() {
   vkDestroyShaderModule(logicalDevice, vertShaderModule, nullptr);
 }
 
-void vulkan_app::createRenderPass() {
-  // make a color buffer
-  VkAttachmentDescription colorAttachment{};
-  colorAttachment.format  = swapChainImageFormat;
-  colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+// create framebuffers to hold each swapchain image
+void vulkan_app::createFramebuffers() {
+  swapChainFramebuffers.resize(swapChainImageViews.size());
 
-  // clear the framebuffer to black before drawing a new frame
-  colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-  // store the rendered shit in memory so it can... be rendered
-  colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+  for (size_t i = 0; i < swapChainImageViews.size(); ++i) {
+    // iterate through the image views and make framebuffers for them
+    VkImageView attachments[]{swapChainImageViews[i]};
 
-  // not using stencils, so we don't give a shit about the load and store
-  colorAttachment.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-  colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    VkFramebufferCreateInfo framebufferInfo{};
+    framebufferInfo.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    framebufferInfo.renderPass      = renderPass;
+    framebufferInfo.attachmentCount = 1;
+    framebufferInfo.pAttachments    = attachments;
+    framebufferInfo.width           = swapChainExtent.width;
+    framebufferInfo.height          = swapChainExtent.height;
+    framebufferInfo.layers          = 1;
 
-  // we don't care what the previous layout of the image was
-  colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-  // we're using the image to be presented
-  colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-
-  // TODO: Understand attachment references and subpasses. Brain hurty, no sleepy.
-  VkAttachmentReference colorAttachmentRef{};
-  colorAttachmentRef.attachment = 0;
-  colorAttachmentRef.layout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-
-  VkSubpassDescription subpass{};
-  // you can also bind this to compute. Very interesting...
-  subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-  // The index of the attachment in this array is directly referenced from the fragment
-  // shader with the layout(location = 0) out vec4 outColor directive!
-  subpass.colorAttachmentCount = 1;
-  subpass.pColorAttachments    = &colorAttachmentRef;
-
-  VkRenderPassCreateInfo renderPassInfo{};
-  renderPassInfo.sType           = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-  renderPassInfo.attachmentCount = 1;
-  renderPassInfo.pAttachments    = &colorAttachment;
-  renderPassInfo.subpassCount    = 1;
-  renderPassInfo.pSubpasses      = &subpass;
-
-  // create the render pass, panic if we can't
-  if (vkCreateRenderPass(logicalDevice, &renderPassInfo, nullptr, &renderPass) !=
-      VK_SUCCESS) {
-    throw std::runtime_error("failed to create render pass!");
+    if (vkCreateFramebuffer(logicalDevice, &framebufferInfo, nullptr,
+                            &swapChainFramebuffers[i]) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to create framebuffer!");
+    }
   }
 }
 
+// make a command pool to allow us to draw shit
+void vulkan_app::createCommandPool() {
+  QueueFamilyIndices queueFamilyIndices = findQueueFamilies(physicalDevice);
+
+  // each command pool can only execute commmands for one queue family, and in this case
+  // we've picked graphics
+  VkCommandPoolCreateInfo poolInfo{};
+  poolInfo.sType            = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+  poolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily.value();
+  poolInfo.flags            = 0; // optional
+
+  // final creation of command pool
+  if (vkCreateCommandPool(logicalDevice, &poolInfo, nullptr, &commandPool) !=
+      VK_SUCCESS) {
+    throw std::runtime_error("Failed to create command pool!");
+  }
+}
+
+// populate the command pool with buffers that allow us to do things
+void vulkan_app::createCommandBuffers() {
+  commandBuffers.resize(swapChainFramebuffers.size());
+
+  VkCommandBufferAllocateInfo allocInfo{};
+  allocInfo.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+  allocInfo.commandPool        = commandPool;
+  allocInfo.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+  allocInfo.commandBufferCount = (uint32_t)commandBuffers.size();
+
+  // cram the command buffers into commandBuffers[]
+  if (vkAllocateCommandBuffers(logicalDevice, &allocInfo, commandBuffers.data()) !=
+      VK_SUCCESS) {
+    throw std::runtime_error("Failed to allocate command buffers!");
+  }
+
+  // start recording command buffers
+  for (size_t i = 0; i < commandBuffers.size(); ++i) {
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType            = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags            = 0;       // optional
+    beginInfo.pInheritanceInfo = nullptr; // optional
+
+    if (vkBeginCommandBuffer(commandBuffers[i], &beginInfo) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to begin recording command buffer!");
+    }
+
+    VkRenderPassBeginInfo renderPassInfo{};
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    // which render pass are we talking about?
+    renderPassInfo.renderPass = renderPass;
+    // what attachments is it using?
+    renderPassInfo.framebuffer = swapChainFramebuffers[i];
+
+    // tell it the size of the rendering area
+    renderPassInfo.renderArea.offset = {0, 0};
+    renderPassInfo.renderArea.extent = swapChainExtent;
+
+    // what color are we using for blanking? used for VK_ATTACHMENT_LOAD_OP_CLEAR
+    VkClearValue clearColor        = {0.0f, 0.0f, 0.0f, 1.0f};
+    renderPassInfo.clearValueCount = 1;
+    renderPassInfo.pClearValues    = &clearColor;
+
+    // begin the render pass spec
+    vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+    // bind the renderpass to the pipeline. second param tells us if its compute or
+    // graphics
+    vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                      graphicsPipeline);
+
+    vkCmdDraw(commandBuffers[i], 3, 1, 0, 0);
+
+    // finish the render pass spec
+    vkCmdEndRenderPass(commandBuffers[i]);
+
+    if (vkEndCommandBuffer(commandBuffers[i]) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to record command buffer!");
+    }
+  }
+}
+
+// draw images to the screen
+void vulkan_app::drawFrame() {
+  // wait for last draw call on this image to finish before starting again
+  vkWaitForFences(logicalDevice, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
+
+  // 1: acquire an image from the swapchain
+  uint32_t imageIndex;
+
+  // imageAvailableSemaphore trips when the present engine is finished using the image.
+  vkAcquireNextImageKHR(logicalDevice, swapChain, UINT64_MAX,
+                        imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE,
+                        &imageIndex);
+
+  // if this image is in flight, wait for it to finish before proceeding
+  if (imagesInFlight[imageIndex] != VK_NULL_HANDLE) {
+    vkWaitForFences(logicalDevice, 1, &imagesInFlight[imageIndex], VK_TRUE, UINT64_MAX);
+  }
+  // set this frame as in flight
+  imagesInFlight[imageIndex] = inFlightFences[currentFrame];
+
+  // 2: execute the command buffer with that image as an attachment in the framebuffer
+  VkSubmitInfo submitInfo{};
+  submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+
+  VkSemaphore waitSemaphores[] = {imageAvailableSemaphores[currentFrame]};
+  // wait until the image is available to write colors on it
+  VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+
+  // assign the wait semaphores
+  submitInfo.waitSemaphoreCount = 1;
+  submitInfo.pWaitSemaphores    = waitSemaphores;
+  submitInfo.pWaitDstStageMask  = waitStages;
+
+  // tell it what command buffers to actually submit for execution
+  submitInfo.commandBufferCount = 1;
+  submitInfo.pCommandBuffers    = &commandBuffers[imageIndex];
+
+  // tell it what semaphores to signal once the buffers are done
+  VkSemaphore signalSemaphores[]  = {renderFinishedSemaphores[currentFrame]};
+  submitInfo.signalSemaphoreCount = 1;
+  submitInfo.pSignalSemaphores    = signalSemaphores;
+
+  vkResetFences(logicalDevice, 1, &inFlightFences[currentFrame]);
+  // 3: return the image to the swapchain for presentation
+  // the fence will send a signal every time the command buffer finishes execution
+
+  if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]) !=
+      VK_SUCCESS) {
+    throw std::runtime_error("Failed to submit draw command buffer!");
+  }
+
+  VkPresentInfoKHR presentInfo{};
+  presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+
+  presentInfo.waitSemaphoreCount = 1;
+  presentInfo.pWaitSemaphores    = signalSemaphores;
+
+  // make an array of swapchains
+  VkSwapchainKHR swapChains[] = {swapChain};
+  presentInfo.swapchainCount  = 1;
+  // which swapchain are we presenting images to?
+  presentInfo.pSwapchains = swapChains;
+  // index of image for each swapchain
+  presentInfo.pImageIndices = &imageIndex;
+
+  // tells you whether the presentation is successful for each individual swapchain
+  presentInfo.pResults = nullptr; // Optional
+
+  // draw the goddamn triangle on the screen
+  vkQueuePresentKHR(presentQueue, &presentInfo);
+
+  // iterate the framecount. Loops around every time it passes MAX_FRAMES_IN_FLIGHT
+  currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+}
+
+// make flags for timing and shit
+void vulkan_app::createSyncObjects() {
+  // resize the semaphore vectors to the amount of concurrent frames possible
+  imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+  renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+  inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
+  imagesInFlight.resize(swapChainImages.size(), VK_NULL_HANDLE);
+
+  // grug fill in tiny semaphore struct
+  VkSemaphoreCreateInfo semaphoreInfo{};
+  semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+  semaphoreInfo.flags = 0;
+
+  VkFenceCreateInfo fenceInfo{};
+  fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+  // turn the fence on by default so rendering can actually start.
+  fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+
+  // make semaphores for image availability and render status, and make fences for cpu-gpu
+  // sync.
+  for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+    if (vkCreateSemaphore(logicalDevice, &semaphoreInfo, nullptr,
+                          &imageAvailableSemaphores[i]) != VK_SUCCESS ||
+        vkCreateSemaphore(logicalDevice, &semaphoreInfo, nullptr,
+                          &renderFinishedSemaphores[i]) != VK_SUCCESS ||
+        vkCreateFence(logicalDevice, &fenceInfo, nullptr, &inFlightFences[i]) !=
+            VK_SUCCESS) {
+
+      throw std::runtime_error("failed to create sync objects for a frame!");
+    }
+  }
+}
+
+// make a shader module for vulkan to use, based on passed-in bytecode
 VkShaderModule vulkan_app::createShaderModule(const std::vector<char> code) {
   VkShaderModuleCreateInfo createInfo{};
   createInfo.sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
@@ -476,6 +720,7 @@ VkShaderModule vulkan_app::createShaderModule(const std::vector<char> code) {
   return shaderModule;
 }
 
+// pick a GPU to run on
 void vulkan_app::pickPhysicalDevice() {
   uint32_t deviceCount = 0;
   vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);
@@ -499,6 +744,7 @@ void vulkan_app::pickPhysicalDevice() {
   }
 }
 
+// see if the device can support the extensions and swapchain specs we ask of it
 bool vulkan_app::isDeviceSuitable(VkPhysicalDevice device) {
   VkPhysicalDeviceProperties deviceProperties;
   vkGetPhysicalDeviceProperties(device, &deviceProperties);
@@ -521,6 +767,7 @@ bool vulkan_app::isDeviceSuitable(VkPhysicalDevice device) {
   return indices.isComplete() && extensionsSupported && swapChainAdequate;
 }
 
+// see if our device can support all the extensions we need
 bool vulkan_app::checkDeviceExtensionSupport(VkPhysicalDevice device) {
   uint32_t extensionCount;
   vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
@@ -543,6 +790,7 @@ bool vulkan_app::checkDeviceExtensionSupport(VkPhysicalDevice device) {
   return requiredExtensions.empty();
 }
 
+// pick the color display format for the surface
 VkSurfaceFormatKHR vulkan_app::chooseSwapSurfaceFormat(
     const std::vector<VkSurfaceFormatKHR> &availableFormats) {
 
@@ -594,6 +842,7 @@ VkExtent2D vulkan_app::chooseSwapExtent(const VkSurfaceCapabilitiesKHR &capabili
   }
 }
 
+// TODO: revisit queue families. This is fuzzy
 vulkan_app::QueueFamilyIndices vulkan_app::findQueueFamilies(VkPhysicalDevice device) {
   QueueFamilyIndices indices;
   // do ya get it yet?
@@ -629,10 +878,26 @@ vulkan_app::QueueFamilyIndices vulkan_app::findQueueFamilies(VkPhysicalDevice de
 void vulkan_app::mainLoop() {
   while (!glfwWindowShouldClose(window)) {
     glfwPollEvents();
+    drawFrame();
   }
+
+  vkDeviceWaitIdle(logicalDevice);
 }
 
+// clean up our mess
 void vulkan_app::cleanup() {
+  // kill the semaphores and fences. bye-bye, little flag dudes...
+  for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+    vkDestroySemaphore(logicalDevice, renderFinishedSemaphores[i], nullptr);
+    vkDestroySemaphore(logicalDevice, imageAvailableSemaphores[i], nullptr);
+    vkDestroyFence(logicalDevice, inFlightFences[i], nullptr);
+  }
+  // kill the command pool
+  vkDestroyCommandPool(logicalDevice, commandPool, nullptr);
+  // kill all the framebuffers we made in createFramebuffers()
+  for (auto framebuffer : swapChainFramebuffers) {
+    vkDestroyFramebuffer(logicalDevice, framebuffer, nullptr);
+  }
   // kill the pipeline
   vkDestroyPipeline(logicalDevice, graphicsPipeline, nullptr);
   // kill the pipeline layout
@@ -643,7 +908,6 @@ void vulkan_app::cleanup() {
     vkDestroyImageView(logicalDevice, imageView, nullptr);
   }
   // kill the swapchain
-  std::cout << "where'd my swapchain go, dad?";
   vkDestroySwapchainKHR(logicalDevice, swapChain, nullptr);
   // kill the logical device
   vkDestroyDevice(logicalDevice, nullptr);
@@ -663,6 +927,7 @@ void vulkan_app::cleanup() {
   glfwTerminate();
 }
 
+// set up a vulkan instance
 void vulkan_app::createInstance() {
   // if the validation layers are turned on, but aren't available on the system,
   // panic.

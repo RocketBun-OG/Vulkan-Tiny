@@ -6,23 +6,29 @@
 #include <cstring>
 #include <iostream>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <vector>
-#include <set>
+
+const std::vector<const char *> deviceExtensions = {
+    VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+
 class vulkan_app {
 public:
   void run();
 
 private:
+  // things for drawing to the screen
   GLFWwindow *window;
   VkInstance instance;
-
   VkSurfaceKHR surface;
+
+  // devices
   VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
   VkDevice logicalDevice;
   // handle for the graphics queue
   VkQueue graphicsQueue;
-  //handle for the present queue
+  // handle for the present queue
   VkQueue presentQueue;
 
   struct QueueFamilyIndices {
@@ -31,7 +37,12 @@ private:
     bool isComplete() {
       return graphicsFamily.has_value() && presentFamily.has_value();
     }
+  };
 
+  struct SwapChainSupportDetails {
+    VkSurfaceCapabilitiesKHR capabilities;
+    std::vector<VkSurfaceFormatKHR> formats;
+    std::vector<VkPresentModeKHR> presentModes;
   };
 
   const uint32_t WIDTH = 800;
@@ -50,9 +61,22 @@ private:
   void initVulkan();
   void createInstance();
   void pickPhysicalDevice();
+
   bool isDeviceSuitable(VkPhysicalDevice device);
-  void createLogicalDevice();
+  bool checkDeviceExtensionSupport(VkPhysicalDevice device);
+
+  SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device);
   QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device);
+
+  VkSurfaceFormatKHR chooseSwapSurfaceFormat(
+      const std::vector<VkSurfaceFormatKHR> &availableFormats);
+  VkPresentModeKHR chooseSwapPresentMode(
+      const std::vector<VkPresentModeKHR> &availablePresentModes);
+
+  VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR &capabilities);
+
+  void createLogicalDevice();
+
   void createSurface();
 
   void mainLoop();

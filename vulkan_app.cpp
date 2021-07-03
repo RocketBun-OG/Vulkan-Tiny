@@ -32,6 +32,39 @@ void vulkan_app::createSurface() {
   }
 }
 
+// gets the details of the graphics card's swapchain support
+vulkan_app::SwapChainSupportDetails
+vulkan_app::querySwapChainSupport(VkPhysicalDevice device) {
+
+  SwapChainSupportDetails details;
+  // surface deets grabbing
+  vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface,
+                                            &details.capabilities);
+
+  // format grabbing
+  uint32_t formatCount;
+  vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, nullptr);
+
+  if (formatCount != 0) {
+    details.formats.resize(formatCount);
+    vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount,
+                                         details.formats.data());
+  }
+
+  // present mode grabbing
+  uint32_t presentModeCount;
+  vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &formatCount,
+                                            nullptr);
+
+  if (presentModeCount != 0) {
+    details.presentModes.resize(presentModeCount);
+    vkGetPhysicalDeviceSurfacePresentModesKHR(
+        device, surface, &presentModeCount, details.presentModes.data());
+  }
+
+  return details;
+}
+
 void vulkan_app::createLogicalDevice() {
   // queue creation bullshit
   QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
@@ -68,7 +101,9 @@ void vulkan_app::createLogicalDevice() {
 
   createInfo.pEnabledFeatures = &deviceFeatures;
 
-  createInfo.enabledExtensionCount = 0;
+  createInfo.enabledExtensionCount =
+      static_cast<uint32_t>(deviceExtensions.size());
+  createInfo.ppEnabledExtensionNames = deviceExtensions.data();
   // add the validation layers, if they exist
   if (enableValidationLayers) {
     createInfo.enabledLayerCount =
@@ -122,9 +157,73 @@ bool vulkan_app::isDeviceSuitable(VkPhysicalDevice device) {
   // fun fact: tabnine is starting to get it too!
 
   QueueFamilyIndices indices = findQueueFamilies(device);
-  return indices.isComplete();
+
+  bool extensionsSupported = checkDeviceExtensionSupport(device);
+
+  bool swapChainAdequate = false;
+  if (extensionsSupported) {
+    SwapChainSupportDetails swapChainSupport = querySwapChainSupport(device);
+    swapChainAdequate = !swapChainSupport.formats.empty() &&
+                        !swapChainSupport.presentModes.empty();
+  }
+
+  return indices.isComplete() && extensionsSupported && swapChainAdequate;
 }
 
+bool vulkan_app::checkDeviceExtensionSupport(VkPhysicalDevice device) {
+  uint32_t extensionCount;
+  vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount,
+                                       nullptr);
+
+  // are you familiar with this pattern yet? :)
+  std::vector<VkExtensionProperties> availableExtensions(extensionCount);
+  vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount,
+                                       availableExtensions.data());
+
+  std::set<std::string> requiredExtensions(deviceExtensions.begin(),
+                                           deviceExtensions.end());
+
+  // for each extension in the list of available extensions, erase it from the
+  // list of required extensions. If there are any required extensions left at
+  // the end, it returns false. If not, it returns true. Nifty, eh?
+  for (const auto &extension : availableExtensions) {
+    requiredExtensions.erase(extension.extensionName);
+  }
+
+  return requiredExtensions.empty();
+}
+
+VkSurfaceFormatKHR vulkan_app::chooseSwapSurfaceFormat(
+    const std::vector<VkSurfaceFormatKHR> &availableFormats) {
+
+  for (const auto &availableFormat : availableFormats) {
+    if (availableFormat.format == VK_FORMAT_B8G8R8A8_SRGB &&
+        availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+      return availableFormat;
+    }
+  }
+  // if srgb isnt there, return the first format suggested.
+  return availableFormats[0];
+}
+
+// choose the vsync/present mode. see obsidian note "Vulkan present modes" for
+// details.
+VkPresentModeKHR vulkan_app::chooseSwapPresentMode(
+    const std::vector<VkPresentModeKHR> &availablePresentModes) {
+
+  // triple buffer if we have it
+  for (const auto &availablePresentMode : availablePresentModes) {
+    if (availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR) {
+      return availablePresentMode;
+    }
+  }
+  // otherwise standard vsync
+  return VK_PRESENT_MODE_FIFO_KHR;
+}
+
+// set the resolution of the swapchain images, in pixels
+VkExtent2D
+vulkan_app::chooseSwapExtent(const VkSurfaceCapabilitiesKHR &capabilities) {}
 vulkan_app::QueueFamilyIndices
 vulkan_app::findQueueFamilies(VkPhysicalDevice device) {
   QueueFamilyIndices indices;

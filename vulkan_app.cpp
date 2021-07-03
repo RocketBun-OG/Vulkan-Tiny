@@ -13,8 +13,7 @@ void vulkan_app::initWindow() {
   glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
   glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
-  window = glfwCreateWindow(WIDTH, HEIGHT, "This is a lot of work", nullptr,
-                            nullptr);
+  window = glfwCreateWindow(WIDTH, HEIGHT, "This is a lot of work", nullptr, nullptr);
 }
 
 void vulkan_app::initVulkan() {
@@ -23,11 +22,11 @@ void vulkan_app::initVulkan() {
   createSurface();
   pickPhysicalDevice();
   createLogicalDevice();
+  createSwapChain();
 }
 
 void vulkan_app::createSurface() {
-  if (glfwCreateWindowSurface(instance, window, nullptr, &surface) !=
-      VK_SUCCESS) {
+  if (glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS) {
     throw std::runtime_error("Failed to create window surface!");
   }
 }
@@ -38,8 +37,7 @@ vulkan_app::querySwapChainSupport(VkPhysicalDevice device) {
 
   SwapChainSupportDetails details;
   // surface deets grabbing
-  vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface,
-                                            &details.capabilities);
+  vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &details.capabilities);
 
   // format grabbing
   uint32_t formatCount;
@@ -53,13 +51,12 @@ vulkan_app::querySwapChainSupport(VkPhysicalDevice device) {
 
   // present mode grabbing
   uint32_t presentModeCount;
-  vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &formatCount,
-                                            nullptr);
+  vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &formatCount, nullptr);
 
   if (presentModeCount != 0) {
     details.presentModes.resize(presentModeCount);
-    vkGetPhysicalDeviceSurfacePresentModesKHR(
-        device, surface, &presentModeCount, details.presentModes.data());
+    vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount,
+                                              details.presentModes.data());
   }
 
   return details;
@@ -78,9 +75,9 @@ void vulkan_app::createLogicalDevice() {
   for (uint32_t queueFamily : uniqueQueueFamilies) {
     // fill the struct
     VkDeviceQueueCreateInfo queueCreateInfo{};
-    queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+    queueCreateInfo.sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
     queueCreateInfo.queueFamilyIndex = queueFamily;
-    queueCreateInfo.queueCount = 1;
+    queueCreateInfo.queueCount       = 1;
     queueCreateInfo.pQueuePriorities = &queuePriority;
 
     // add it to the infos vector
@@ -94,20 +91,17 @@ void vulkan_app::createLogicalDevice() {
   createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
   // tell it about the queue creation info we just set up
 
-  createInfo.queueCreateInfoCount =
-      static_cast<uint32_t>(queueCreateInfos.size());
-  createInfo.pQueueCreateInfos = queueCreateInfos.data();
+  createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
+  createInfo.pQueueCreateInfos    = queueCreateInfos.data();
   createInfo.queueCreateInfoCount = 1;
 
   createInfo.pEnabledFeatures = &deviceFeatures;
 
-  createInfo.enabledExtensionCount =
-      static_cast<uint32_t>(deviceExtensions.size());
+  createInfo.enabledExtensionCount   = static_cast<uint32_t>(deviceExtensions.size());
   createInfo.ppEnabledExtensionNames = deviceExtensions.data();
   // add the validation layers, if they exist
   if (enableValidationLayers) {
-    createInfo.enabledLayerCount =
-        static_cast<uint32_t>(validationLayers.size());
+    createInfo.enabledLayerCount   = static_cast<uint32_t>(validationLayers.size());
     createInfo.ppEnabledLayerNames = validationLayers.data();
   } else {
     createInfo.enabledLayerCount = 0;
@@ -119,10 +113,86 @@ void vulkan_app::createLogicalDevice() {
     throw std::runtime_error("Failed to create logical device!");
   }
   // stick the queues to their handles
-  vkGetDeviceQueue(logicalDevice, indices.graphicsFamily.value(), 0,
-                   &graphicsQueue);
-  vkGetDeviceQueue(logicalDevice, indices.presentFamily.value(), 0,
-                   &presentQueue);
+  vkGetDeviceQueue(logicalDevice, indices.graphicsFamily.value(), 0, &graphicsQueue);
+  vkGetDeviceQueue(logicalDevice, indices.presentFamily.value(), 0, &presentQueue);
+}
+
+void vulkan_app::createSwapChain() {
+
+  SwapChainSupportDetails swapChainSupport = querySwapChainSupport(physicalDevice);
+  // minimum amount of images the swapchain needs to function, +1 to avoid
+  // driver hangups
+  uint32_t imageCount = swapChainSupport.capabilities.minImageCount + 1;
+
+  // if there is a max # of images, and we've exceeded it, set it to the max instead
+  if (swapChainSupport.capabilities.maxImageCount > 0 &&
+      imageCount > swapChainSupport.capabilities.maxImageCount) {
+
+    imageCount = swapChainSupport.capabilities.maxImageCount;
+  }
+
+  VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport.formats);
+  VkPresentModeKHR presentMode     = chooseSwapPresentMode(swapChainSupport.presentModes);
+  VkExtent2D extent                = chooseSwapExtent(swapChainSupport.capabilities);
+
+  // struct time!
+  VkSwapchainCreateInfoKHR createInfo{};
+  createInfo.sType           = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+  createInfo.surface         = surface;
+  createInfo.minImageCount   = imageCount;
+  createInfo.imageFormat     = surfaceFormat.format;
+  createInfo.imageColorSpace = surfaceFormat.colorSpace;
+  createInfo.imageExtent     = extent;
+  // this is always 1 unless you're doing stereoscopic 3D
+  createInfo.imageArrayLayers = 1;
+  // tell vulkan we're rendering these images directly
+  createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
+  QueueFamilyIndices indices    = findQueueFamilies(physicalDevice);
+  uint32_t queueFamilyIndices[] = {indices.graphicsFamily.value(),
+                                   indices.presentFamily.value()};
+
+  // determines whether or not image sharing is sloppy or exclusive
+  if (indices.graphicsFamily != indices.presentFamily) {
+    createInfo.imageSharingMode      = VK_SHARING_MODE_CONCURRENT;
+    createInfo.queueFamilyIndexCount = 2;
+    createInfo.pQueueFamilyIndices   = queueFamilyIndices;
+  } else {
+    createInfo.imageSharingMode      = VK_SHARING_MODE_EXCLUSIVE;
+    createInfo.queueFamilyIndexCount = 0;       // optional
+    createInfo.pQueueFamilyIndices   = nullptr; // optional
+  }
+
+  // don't do anything special to the image
+  createInfo.preTransform = swapChainSupport.capabilities.currentTransform;
+  // ignore the alpha channel for blending
+  createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+
+  createInfo.presentMode = presentMode;
+  // ignore the color of pixels that are obscured
+  createInfo.clipped = VK_TRUE;
+  // this is for recreating a swapchain when needed, as we need the "old" version to do
+  // that.
+  createInfo.oldSwapchain = VK_NULL_HANDLE;
+  // almost there!
+
+  if (vkCreateSwapchainKHR(logicalDevice, &createInfo, nullptr, &swapChain) !=
+      VK_SUCCESS) {
+    throw std::runtime_error("Failed to create swapchain!");
+  }
+
+  // now we have to retrieve the swapchain images!
+  // first, query the actual number of images (not the minimum, which we defined at the
+  // beginning of the function)
+  vkGetSwapchainImagesKHR(logicalDevice, swapChain, &imageCount, nullptr);
+  // then, we resize the vector to fit the actual number of images
+  swapChainImages.resize(imageCount);
+  // then, do the grad student shuffle!
+  vkGetSwapchainImagesKHR(logicalDevice, swapChain, &imageCount, swapChainImages.data());
+
+  // store the format and extent for later
+  swapChainImageFormat = surfaceFormat.format;
+  swapChainExtent      = extent;
 }
 
 void vulkan_app::pickPhysicalDevice() {
@@ -163,8 +233,8 @@ bool vulkan_app::isDeviceSuitable(VkPhysicalDevice device) {
   bool swapChainAdequate = false;
   if (extensionsSupported) {
     SwapChainSupportDetails swapChainSupport = querySwapChainSupport(device);
-    swapChainAdequate = !swapChainSupport.formats.empty() &&
-                        !swapChainSupport.presentModes.empty();
+    swapChainAdequate =
+        !swapChainSupport.formats.empty() && !swapChainSupport.presentModes.empty();
   }
 
   return indices.isComplete() && extensionsSupported && swapChainAdequate;
@@ -172,8 +242,7 @@ bool vulkan_app::isDeviceSuitable(VkPhysicalDevice device) {
 
 bool vulkan_app::checkDeviceExtensionSupport(VkPhysicalDevice device) {
   uint32_t extensionCount;
-  vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount,
-                                       nullptr);
+  vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
 
   // are you familiar with this pattern yet? :)
   std::vector<VkExtensionProperties> availableExtensions(extensionCount);
@@ -222,10 +291,29 @@ VkPresentModeKHR vulkan_app::chooseSwapPresentMode(
 }
 
 // set the resolution of the swapchain images, in pixels
-VkExtent2D
-vulkan_app::chooseSwapExtent(const VkSurfaceCapabilitiesKHR &capabilities) {}
-vulkan_app::QueueFamilyIndices
-vulkan_app::findQueueFamilies(VkPhysicalDevice device) {
+VkExtent2D vulkan_app::chooseSwapExtent(const VkSurfaceCapabilitiesKHR &capabilities) {
+
+  if (capabilities.currentExtent.width != UINT32_MAX) {
+    return capabilities.currentExtent;
+  } else {
+    int width, height;
+    glfwGetFramebufferSize(window, &width, &height);
+
+    VkExtent2D actualExtent = {static_cast<uint32_t>(width),
+                               static_cast<uint32_t>(height)};
+
+    // clamp the size to between the surface's specified max and min
+    actualExtent.width = std::clamp(actualExtent.width, capabilities.minImageExtent.width,
+                                    capabilities.maxImageExtent.width);
+
+    actualExtent.height =
+        std::clamp(actualExtent.height, capabilities.minImageExtent.height,
+                   capabilities.maxImageExtent.height);
+    return actualExtent;
+  }
+}
+
+vulkan_app::QueueFamilyIndices vulkan_app::findQueueFamilies(VkPhysicalDevice device) {
   QueueFamilyIndices indices;
   // do ya get it yet?
   uint32_t queueFamilyCount = 0;
@@ -264,6 +352,9 @@ void vulkan_app::mainLoop() {
 }
 
 void vulkan_app::cleanup() {
+  // kill the swapchain
+  std::cout << "where'd my swapchain go, dad?";
+  vkDestroySwapchainKHR(logicalDevice, swapChain, nullptr);
   // kill the logical device
   vkDestroyDevice(logicalDevice, nullptr);
   // if we're in debug mode, kill the debugger.
@@ -291,28 +382,27 @@ void vulkan_app::createInstance() {
 
   // create a struct to hold application info
   VkApplicationInfo appInfo{};
-  appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-  appInfo.pApplicationName = "Vulkan Adventure";
+  appInfo.sType              = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+  appInfo.pApplicationName   = "Vulkan Adventure";
   appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
-  appInfo.pEngineName = "The Unibox";
-  appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-  appInfo.apiVersion = VK_API_VERSION_1_0;
+  appInfo.pEngineName        = "The Unibox";
+  appInfo.engineVersion      = VK_MAKE_VERSION(1, 0, 0);
+  appInfo.apiVersion         = VK_API_VERSION_1_0;
 
   // create a struct to hold critical vulkan info
   VkInstanceCreateInfo createInfo{};
-  createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+  createInfo.sType            = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
   createInfo.pApplicationInfo = &appInfo;
 
   // find out how many extensions glfw needs and store the info
-  auto extensions = getRequiredExtensions();
-  createInfo.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
+  auto extensions                    = getRequiredExtensions();
+  createInfo.enabledExtensionCount   = static_cast<uint32_t>(extensions.size());
   createInfo.ppEnabledExtensionNames = extensions.data();
 
   // if the validation layers are turned on, add them to the struct. Otherwise,
   // tell the struct there are no layers turnd on.
   if (enableValidationLayers) {
-    createInfo.enabledLayerCount =
-        static_cast<uint32_t>(validationLayers.size());
+    createInfo.enabledLayerCount   = static_cast<uint32_t>(validationLayers.size());
     createInfo.ppEnabledLayerNames = validationLayers.data();
   } else {
     createInfo.enabledLayerCount = 0;
@@ -356,7 +446,7 @@ bool vulkan_app::checkValidationLayerSupport() {
 
 void vulkan_app::populateDebugMessengerCreateInfo(
     VkDebugUtilsMessengerCreateInfoEXT &createInfo) {
-  createInfo = {};
+  createInfo       = {};
   createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
   // this is so verbose it's absolutely fucking insane
   createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
@@ -390,8 +480,7 @@ std::vector<const char *> vulkan_app::getRequiredExtensions() {
 VKAPI_ATTR VkBool32 VKAPI_CALL vulkan_app::debugCallback(
     VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
     VkDebugUtilsMessageTypeFlagsEXT messageType,
-    const VkDebugUtilsMessengerCallbackDataEXT *pCallbackData,
-    void *pUserData) {
+    const VkDebugUtilsMessengerCallbackDataEXT *pCallbackData, void *pUserData) {
   // the -> is basically like pCallbackData.pMessage() but with a pointer. No
   // idea why it's like that, but it is.
   std::cerr << "Validation layer: " << pCallbackData->pMessage << std::endl;
@@ -405,8 +494,8 @@ void vulkan_app::setupDebugMessenger() {
   VkDebugUtilsMessengerCreateInfoEXT createInfo;
   populateDebugMessengerCreateInfo(createInfo);
   // if that fails, panic
-  if (CreateDebugUtilsMessengerEXT(instance, &createInfo, nullptr,
-                                   &debugMessenger) != VK_SUCCESS) {
+  if (CreateDebugUtilsMessengerEXT(instance, &createInfo, nullptr, &debugMessenger) !=
+      VK_SUCCESS) {
     throw std::runtime_error("Failed to set up the debug messenger!");
   }
 }
@@ -414,8 +503,7 @@ void vulkan_app::setupDebugMessenger() {
 // this is such a pain in the ass oh my GOD
 VkResult CreateDebugUtilsMessengerEXT(
     VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT *pCreateInfo,
-    const VkAllocationCallbacks *pAllocator,
-    VkDebugUtilsMessengerEXT *pDebugMessenger) {
+    const VkAllocationCallbacks *pAllocator, VkDebugUtilsMessengerEXT *pDebugMessenger) {
   auto func = (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(
       instance, "vkCreateDebugUtilsMessengerEXT");
   if (func != nullptr) {

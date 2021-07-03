@@ -2,6 +2,8 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+#include <algorithm>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -10,8 +12,7 @@
 #include <stdexcept>
 #include <vector>
 
-const std::vector<const char *> deviceExtensions = {
-    VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+const std::vector<const char *> deviceExtensions = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
 class vulkan_app {
 public:
@@ -26,17 +27,22 @@ private:
   // devices
   VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
   VkDevice logicalDevice;
+  VkSwapchainKHR swapChain;
   // handle for the graphics queue
   VkQueue graphicsQueue;
   // handle for the present queue
   VkQueue presentQueue;
 
+  // vector full of images!
+  std::vector<VkImage> swapChainImages;
+
+  VkFormat swapChainImageFormat;
+  VkExtent2D swapChainExtent;
+
   struct QueueFamilyIndices {
     std::optional<uint32_t> graphicsFamily;
     std::optional<uint32_t> presentFamily;
-    bool isComplete() {
-      return graphicsFamily.has_value() && presentFamily.has_value();
-    }
+    bool isComplete() { return graphicsFamily.has_value() && presentFamily.has_value(); }
   };
 
   struct SwapChainSupportDetails {
@@ -45,7 +51,7 @@ private:
     std::vector<VkPresentModeKHR> presentModes;
   };
 
-  const uint32_t WIDTH = 800;
+  const uint32_t WIDTH  = 800;
   const uint32_t HEIGHT = 600;
 
   // const char* creates a pointer to a string literal, in this case
@@ -60,32 +66,33 @@ private:
   void initWindow();
   void initVulkan();
   void createInstance();
-  void pickPhysicalDevice();
 
+  void createSurface();
+
+  void pickPhysicalDevice();
   bool isDeviceSuitable(VkPhysicalDevice device);
   bool checkDeviceExtensionSupport(VkPhysicalDevice device);
 
   SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device);
   QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device);
 
-  VkSurfaceFormatKHR chooseSwapSurfaceFormat(
-      const std::vector<VkSurfaceFormatKHR> &availableFormats);
-  VkPresentModeKHR chooseSwapPresentMode(
-      const std::vector<VkPresentModeKHR> &availablePresentModes);
+  VkSurfaceFormatKHR
+  chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR> &availableFormats);
+  VkPresentModeKHR
+  chooseSwapPresentMode(const std::vector<VkPresentModeKHR> &availablePresentModes);
 
   VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR &capabilities);
 
   void createLogicalDevice();
 
-  void createSurface();
+  void createSwapChain();
 
   void mainLoop();
   void cleanup();
 
   // HERE BE DEBUG DRAGONS
   //----------------------------------------------------------------
-  const std::vector<const char *> validationLayers = {
-      "VK_LAYER_KHRONOS_validation"};
+  const std::vector<const char *> validationLayers = {"VK_LAYER_KHRONOS_validation"};
 
   VkDebugUtilsMessengerEXT debugMessenger;
 
@@ -93,22 +100,19 @@ private:
 
   std::vector<const char *> getRequiredExtensions();
 
-  void populateDebugMessengerCreateInfo(
-      VkDebugUtilsMessengerCreateInfoEXT &createInfo);
+  void populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT &createInfo);
 
-  static VKAPI_ATTR VkBool32 VKAPI_CALL
-  debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
-                VkDebugUtilsMessageTypeFlagsEXT messageType,
-                const VkDebugUtilsMessengerCallbackDataEXT *pCallbackData,
-                void *pUserData);
+  static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
+      VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+      VkDebugUtilsMessageTypeFlagsEXT messageType,
+      const VkDebugUtilsMessengerCallbackDataEXT *pCallbackData, void *pUserData);
 
   void setupDebugMessenger();
 }; // end of class
 
 VkResult CreateDebugUtilsMessengerEXT(
     VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT *pCreateInfo,
-    const VkAllocationCallbacks *pAllocator,
-    VkDebugUtilsMessengerEXT *pDebugMessenger);
+    const VkAllocationCallbacks *pAllocator, VkDebugUtilsMessengerEXT *pDebugMessenger);
 void DestroyDebugUtilsMessengerEXT(VkInstance instance,
                                    VkDebugUtilsMessengerEXT debugMessenger,
                                    const VkAllocationCallbacks *pAllocator);

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <iostream>
 #include <optional>
 #include <set>
@@ -24,6 +25,9 @@ private:
   VkInstance instance;
   VkSurfaceKHR surface;
 
+  // pipeline shenanigans
+  VkRenderPass renderPass;
+  VkPipelineLayout pipelineLayout;
   // devices
   VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
   VkDevice logicalDevice;
@@ -35,6 +39,8 @@ private:
 
   // vector full of images!
   std::vector<VkImage> swapChainImages;
+  // vector full of image views!
+  std::vector<VkImageView> swapChainImageViews;
 
   VkFormat swapChainImageFormat;
   VkExtent2D swapChainExtent;
@@ -83,12 +89,20 @@ private:
 
   VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR &capabilities);
 
+  VkShaderModule createShaderModule(const std::vector<char> code);
+
   void createLogicalDevice();
 
   void createSwapChain();
+  void createImageViews();
+
+  void createGraphicsPipeline();
+  void createRenderPass();
 
   void mainLoop();
   void cleanup();
+
+  static std::vector<char> readFile(const std::string &filename);
 
   // HERE BE DEBUG DRAGONS
   //----------------------------------------------------------------

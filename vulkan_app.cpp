@@ -23,12 +23,36 @@ void vulkan_app::initVulkan() {
   pickPhysicalDevice();
   createLogicalDevice();
   createSwapChain();
+  createImageViews();
+  createRenderPass();
+  createGraphicsPipeline();
 }
 
 void vulkan_app::createSurface() {
   if (glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS) {
     throw std::runtime_error("Failed to create window surface!");
   }
+}
+
+std::vector<char> vulkan_app::readFile(const std::string &filename) {
+  // read it in as binary, and start from the back so we can get the size of the file
+  std::ifstream file(filename, std::ios::ate | std::ios::binary);
+
+  if (!file.is_open()) {
+    throw std::runtime_error("Failed to open file!");
+  }
+  // since the current read position is the end, fileSize is the size of the binary!
+  size_t fileSize = (size_t)file.tellg();
+  // make a char buffer the size of the file
+  std::vector<char> buffer(fileSize);
+
+  // seek to the beginning of the file
+  file.seekg(0);
+  // read the entire thing into the buffer
+  file.read(buffer.data(), fileSize);
+
+  file.close();
+  return buffer;
 }
 
 // gets the details of the graphics card's swapchain support
@@ -195,6 +219,223 @@ void vulkan_app::createSwapChain() {
   swapChainExtent      = extent;
 }
 
+void vulkan_app::createImageViews() {
+  // make the imageviews list as big as the actual swapchain
+  swapChainImageViews.resize(swapChainImages.size());
+
+  for (size_t i = 0; i < swapChainImages.size(); ++i) {
+    VkImageViewCreateInfo createInfo{};
+    createInfo.sType    = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    createInfo.image    = swapChainImages[i];
+    createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    createInfo.format   = swapChainImageFormat;
+
+    // this allows you to swizzle all the colors around if you want. These settings make
+    // it do nothing.
+    createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+    createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+    createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+    createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+
+    // describe the image's purpose and specs
+    createInfo.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+    createInfo.subresourceRange.baseMipLevel   = 0;
+    createInfo.subresourceRange.levelCount     = 1;
+    createInfo.subresourceRange.baseArrayLayer = 0;
+    createInfo.subresourceRange.layerCount     = 1;
+
+    // make the image view for real
+    if (vkCreateImageView(logicalDevice, &createInfo, nullptr, &swapChainImageViews[i]) !=
+        VK_SUCCESS) {
+      throw std::runtime_error("Failed to create image views!");
+    }
+  }
+}
+
+void vulkan_app::createGraphicsPipeline() {
+  auto vertShaderCode = readFile("shaders/shader.vert.spv");
+  auto fragShaderCode = readFile("shaders/shader.frag.spv");
+
+  VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
+  VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
+
+  // assign the shaders to certain pipeline stages
+  VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
+  vertShaderStageInfo.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  vertShaderStageInfo.stage  = VK_SHADER_STAGE_VERTEX_BIT;
+  vertShaderStageInfo.module = vertShaderModule;
+  // this tells the shader what the entry point is. In this case, it's just the main() in
+  // the .vert/.frag
+  vertShaderStageInfo.pName = "main";
+
+  // do the same shit again but for the frag shader
+  VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
+  fragShaderStageInfo.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  fragShaderStageInfo.stage  = VK_SHADER_STAGE_FRAGMENT_BIT;
+  fragShaderStageInfo.module = fragShaderModule;
+  fragShaderStageInfo.pName  = "main";
+
+  // shove the stage info into an array for later
+  VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo,
+                                                    fragShaderStageInfo};
+
+  VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+  // tell the pipeline there's no vertex data to load
+  vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+  vertexInputInfo.vertexBindingDescriptionCount   = 0;
+  vertexInputInfo.pVertexBindingDescriptions      = nullptr; // optional
+  vertexInputInfo.vertexAttributeDescriptionCount = 0;
+  vertexInputInfo.pVertexAttributeDescriptions    = nullptr; // optional
+
+  VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+  // tell the pipeline how to assemble the vertices. In this case, just tell it to make
+  // triangles out of them
+  inputAssembly.sType    = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+  inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+  // VK_TRUE here is only useful for strip topologies
+  inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+  // set up a stock viewport
+  VkViewport viewport{};
+  // viewport position
+  viewport.x = 0.0f;
+  viewport.y = 0.0f;
+  // viewport size
+  viewport.width  = (float)swapChainExtent.width;
+  viewport.height = (float)swapChainExtent.height;
+  // viewport z-depth
+  viewport.minDepth = 0.0f;
+  viewport.maxDepth = 1.0f;
+
+  // set the scissor to not cover anything
+  VkRect2D scissor{};
+  scissor.offset = {0, 0};
+  scissor.extent = swapChainExtent;
+
+  // meld the scissor and the viewport into a single viewport state
+  VkPipelineViewportStateCreateInfo viewportState{};
+  viewportState.sType         = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+  viewportState.viewportCount = 1;
+  viewportState.pViewports    = &viewport;
+  viewportState.scissorCount  = 1;
+  viewportState.pScissors     = &scissor;
+
+  // rasterizer
+  VkPipelineRasterizationStateCreateInfo rasterizer{};
+  rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+  // get rid of fragments that are beyond the clipping planes
+  rasterizer.depthClampEnable = VK_FALSE;
+  // if you set this to true, the framebuffer never receives any geometry
+  rasterizer.rasterizerDiscardEnable = VK_FALSE;
+  // tell the rasterizer how to generate fragments for geometry
+  rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+  // does what it says it does
+  rasterizer.lineWidth = 1.0f;
+
+  // enable backface culling
+  rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+  // determines vertex order that makes something front-facing
+  rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+
+  // disable depth biasing
+  rasterizer.depthBiasEnable         = VK_FALSE;
+  rasterizer.depthBiasConstantFactor = 0.0f; // Optional
+  rasterizer.depthBiasClamp          = 0.0f; // Optional
+  rasterizer.depthBiasSlopeFactor    = 0.0f; // Optional
+
+  // leave multisampling disabled for now
+  VkPipelineMultisampleStateCreateInfo multisampling{};
+  multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+  multisampling.sampleShadingEnable   = VK_FALSE;
+  multisampling.rasterizationSamples  = VK_SAMPLE_COUNT_1_BIT;
+  multisampling.minSampleShading      = 1.0f;     // Optional
+  multisampling.pSampleMask           = nullptr;  // Optional
+  multisampling.alphaToCoverageEnable = VK_FALSE; // Optional
+  multisampling.alphaToOneEnable      = VK_FALSE; // Optional
+
+  // we only have one framebuffer, so we don't need to blend it.
+  VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+  colorBlendAttachment.colorWriteMask =
+      VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT |
+      VK_COLOR_COMPONENT_A_BIT;
+  colorBlendAttachment.blendEnable = VK_FALSE;
+
+  VkPipelineColorBlendStateCreateInfo colorBlending{};
+  colorBlending.sType         = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+  colorBlending.logicOpEnable = VK_FALSE;
+  colorBlending.attachmentCount = 1;
+  colorBlending.pAttachments    = &colorBlendAttachment;
+
+  VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+  pipelineLayoutInfo.sType          = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+  pipelineLayoutInfo.setLayoutCount = 0;
+  pipelineLayoutInfo.pSetLayouts    = nullptr;
+  pipelineLayoutInfo.pushConstantRangeCount = 0;
+  pipelineLayoutInfo.pPushConstantRanges    = nullptr;
+
+  // Make the pipeline layout, panic if it fails.
+  if (vkCreatePipelineLayout(logicalDevice, &pipelineLayoutInfo, nullptr,
+                             &pipelineLayout) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to create pipeline layout!");
+  }
+
+  // compilation of the shaders to machine code doesn't happen until the graphics pipeline
+  // gets created, so we can throw these away without consequence
+  vkDestroyShaderModule(logicalDevice, fragShaderModule, nullptr);
+  vkDestroyShaderModule(logicalDevice, vertShaderModule, nullptr);
+}
+
+void vulkan_app::createRenderPass() {
+  VkAttachmentDescription colorAttachment{};
+  colorAttachment.format  = swapChainImageFormat;
+  colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+
+  // clear the framebuffer to black before drawing a new frame
+  colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+  // store the rendered shit in memory so it can... be rendered
+  colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+
+  // not using stencils, so we don't give a shit about the load and store
+  colorAttachment.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+  colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+
+  // we don't care what the previous layout of the image was
+  colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  // we're using the image to be presented
+  colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+  // TODO: Understand attachment references and subpasses. Brain hurty, no sleepy.
+  VkAttachmentReference colorAttachmentRef{};
+  colorAttachmentRef.attachment = 0;
+  colorAttachmentRef.layout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+  VkSubpassDescription subpass{};
+  // you can also bind this to compute. Very interesting...
+  subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+
+  subpass.colorAttachmentCount = 1;
+  subpass.pColorAttachments    = &colorAttachmentRef;
+}
+
+VkShaderModule vulkan_app::createShaderModule(const std::vector<char> code) {
+  VkShaderModuleCreateInfo createInfo{};
+  createInfo.sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+  createInfo.codeSize = code.size();
+
+  // have to re-cast the code to uint32 for the struct to accept it
+  createInfo.pCode = reinterpret_cast<const uint32_t *>(code.data());
+
+  VkShaderModule shaderModule;
+  // make the fuckin' shader!
+
+  if (vkCreateShaderModule(logicalDevice, &createInfo, nullptr, &shaderModule) !=
+      VK_SUCCESS) {
+    throw std::runtime_error("Failed to create shader module!");
+  }
+  return shaderModule;
+}
+
 void vulkan_app::pickPhysicalDevice() {
   uint32_t deviceCount = 0;
   vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);
@@ -352,6 +593,12 @@ void vulkan_app::mainLoop() {
 }
 
 void vulkan_app::cleanup() {
+  // kill the pipeline layout
+  vkDestroyPipelineLayout(logicalDevice, pipelineLayout, nullptr);
+  // kill all the image views we made in createImageViews()
+  for (auto imageView : swapChainImageViews) {
+    vkDestroyImageView(logicalDevice, imageView, nullptr);
+  }
   // kill the swapchain
   std::cout << "where'd my swapchain go, dad?";
   vkDestroySwapchainKHR(logicalDevice, swapChain, nullptr);

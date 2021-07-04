@@ -13,7 +13,6 @@
 #include <stdexcept>
 #include <vector>
 
-// TODO: fix semaphores
 const std::vector<const char *> deviceExtensions = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
 // how many frames are we allowed to process at once?
@@ -44,8 +43,6 @@ private:
   VkQueue presentQueue;
 
   // signals to tell the application the state of rendering
-  VkSemaphore imageAvailableSemaphore;
-  VkSemaphore renderFinishedSemaphore;
 
   // vectors full of semaphores for each frame
   std::vector<VkSemaphore> imageAvailableSemaphores;

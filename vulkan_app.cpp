@@ -81,10 +81,10 @@ vulkan_app::querySwapChainSupport(VkPhysicalDevice device) {
 
   // present mode grabbing
   uint32_t presentModeCount;
-  vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &formatCount, nullptr);
+  vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, nullptr);
 
   if (presentModeCount != 0) {
-    details.presentModes.resize(presentModeCount);
+    details.presentModes.resize(presentModeCount); // 1887432816
     vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount,
                                               details.presentModes.data());
   }
@@ -331,8 +331,8 @@ void vulkan_app::createRenderPass() {
 
 // make the chonky boi
 void vulkan_app::createGraphicsPipeline() {
-  auto vertShaderCode = readFile("shaders/shader.vert.spv");
-  auto fragShaderCode = readFile("shaders/shader.frag.spv");
+  auto vertShaderCode = readFile("../shaders/shader.vert.spv");
+  auto fragShaderCode = readFile("../shaders/shader.frag.spv");
 
   VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
   VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
@@ -733,6 +733,7 @@ void vulkan_app::pickPhysicalDevice() {
   vkEnumeratePhysicalDevices(instance, &deviceCount, deviceList.data());
 
   for (const auto &device : deviceList) {
+    std::cout << device << " is the current device in the list" << std::endl;
     if (isDeviceSuitable(device)) {
       physicalDevice = device;
       break;

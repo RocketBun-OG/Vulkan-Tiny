@@ -854,7 +854,7 @@ vulkan_app::QueueFamilyIndices vulkan_app::findQueueFamilies(VkPhysicalDevice de
   vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount,
                                            queueFamilyProperties.data());
 
-  int i = 0;
+  uint32_t i = 0;
   for (const auto &queueFamily : queueFamilyProperties) {
     if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
       indices.graphicsFamily = i;

@@ -1,0 +1,13 @@
+#pragma once
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
+#include <iostream>
+#include <optional>
+#include <set>
+#include <stdexcept>
+#include <vector>
+#include <vulkan/vulkan.h>

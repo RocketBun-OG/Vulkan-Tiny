@@ -13,4 +13,10 @@ inputAssemblyCreateInfo(VkPrimitiveTopology topology);
 
 VkPipelineRasterizationStateCreateInfo
 rasterizationStateCreateInfo(VkPolygonMode polygonMode);
+
+VkPipelineMultisampleStateCreateInfo multisampleStateCreateInfo();
+
+VkPipelineColorBlendAttachmentState colorBlendAttachmentState();
+
+VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo();
 } // namespace vkinit

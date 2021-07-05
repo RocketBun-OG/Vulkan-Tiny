@@ -42,6 +42,7 @@ void VulkanEngine::initVulkan() {
 
 void VulkanEngine::cleanup() {
 
+  vkDeviceWaitIdle(device);
   // destroy all sync structures
 
   vkDestroySemaphore(device, presentSemaphore, nullptr);
@@ -56,7 +57,8 @@ void VulkanEngine::cleanup() {
   for (auto framebuffer : swapChainFramebuffers) {
     vkDestroyFramebuffer(device, framebuffer, nullptr);
   }
-
+  vkDestroyPipeline(device, renderPipeline, nullptr);
+  vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
   // destroy the render pass
   vkDestroyRenderPass(device, renderPass, nullptr);
 
@@ -89,8 +91,10 @@ void VulkanEngine::draw() {
   vkResetFences(device, 1, &renderFence);
 
   uint32_t swapChainImageIndex;
-  vkAcquireNextImageKHR(device, swapChain, UINT32_MAX, presentSemaphore, nullptr,
-                        &swapChainImageIndex);
+  VkResult result = vkAcquireNextImageKHR(device, swapChain, UINT32_MAX, presentSemaphore,
+                                          nullptr, &swapChainImageIndex);
+
+  
 
   // reset the command buffer so we can send new stuff to it
   if (vkResetCommandBuffer(graphicalCommandBuffer, 0) != VK_SUCCESS) {
@@ -115,8 +119,7 @@ void VulkanEngine::draw() {
 
   // set the blanking color
   VkClearValue blankValue;
-  float flash      = abs(sin(frameNumber / 120.f));
-  blankValue.color = {{0.0f, 0.0f, flash, 1.0f}};
+  blankValue.color = {{0.0f, 0.0f, 0.0f, 1.0f}};
 
   // create render pass
   VkRenderPassBeginInfo rpInfo{};
@@ -137,7 +140,11 @@ void VulkanEngine::draw() {
   // begin the renderpass
   vkCmdBeginRenderPass(graphBuffer, &rpInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-  // stuff goes here
+  // bind the pipeline
+  vkCmdBindPipeline(graphBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, renderPipeline);
+
+  // its high noon
+  vkCmdDraw(graphBuffer, 3, 1, 0, 0);
 
   vkCmdEndRenderPass(graphBuffer);
 
@@ -163,10 +170,11 @@ void VulkanEngine::draw() {
   submit.commandBufferCount = 1;
   submit.pCommandBuffers    = &graphBuffer;
 
-  if (vkQueueSubmit(graphicsQueue, 1, &submit, renderFence) != VK_SUCCESS) {
-    throw std::runtime_error("Failed to submit work to queue!");
-  }
+  result = vkQueueSubmit(graphicsQueue, 1, &submit, renderFence);
 
+  if (result != VK_SUCCESS) {
+    throw std::runtime_error("Failed to submit image to queue!");
+  }
   // display image to the screen
 
   VkPresentInfoKHR presentInfo{};
@@ -718,6 +726,40 @@ void VulkanEngine::createSwapChain() {
   swapChainImageFormat = surfaceFormat.format;
   swapChainExtent      = extent;
 }
+
+void VulkanEngine::cleanupSwapChain() {
+  // destroy framebuffers
+  for (auto framebuffer : swapChainFramebuffers) {
+    vkDestroyFramebuffer(device, framebuffer, nullptr);
+  }
+  vkFreeCommandBuffers(device, graphicalCommandPool, 1, &graphicalCommandBuffer);
+  vkFreeCommandBuffers(device, computeCommandPool, 1, &computeCommandBuffer);
+
+  vkDestroyPipeline(device, renderPipeline, nullptr);
+  vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+  // destroy the render pass
+  vkDestroyRenderPass(device, renderPass, nullptr);
+
+  // destroy all image views
+  for (auto imageView : swapChainImageViews) {
+    vkDestroyImageView(device, imageView, nullptr);
+  }
+  vkDestroySwapchainKHR(device, swapChain, nullptr);
+}
+
+void VulkanEngine::recreateSwapChain() {
+
+  vkDeviceWaitIdle(device);
+
+  cleanupSwapChain();
+
+  createSwapChain();
+  createImageViews();
+  createRenderPass();
+  createPipelines();
+  createFramebuffers();
+  initCommands();
+}
 //-----------------------------------------------------------------------
 
 // PIPELINE SETUP FUNCTIONS
@@ -857,11 +899,61 @@ void VulkanEngine::createPipelines() {
   }
 
   VkShaderModule vertShader;
-  if(!loadShaderModule("shaders/shader.vert.spv", &vertShader)) {
+  if (!loadShaderModule("shaders/shader.vert.spv", &vertShader)) {
     std::cerr << "Error when building the vertex shader module!" << std::endl;
   } else {
     std::cerr << "No problems building the vertex shader!" << std::endl;
   }
+
+  // create the pipeline layout in its default config
+  VkPipelineLayoutCreateInfo pipelineLayoutInfo = vkinit::pipelineLayoutCreateInfo();
+
+  vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout);
+
+  // now make the pipeline
+
+  PipelineBuilder pipelineBuilder;
+
+  // tell the pipeline about our shader stages
+  pipelineBuilder.shaderStages.push_back(
+      vkinit::pipelineShaderStageCreateInfo(VK_SHADER_STAGE_VERTEX_BIT, vertShader));
+  pipelineBuilder.shaderStages.push_back(
+      vkinit::pipelineShaderStageCreateInfo(VK_SHADER_STAGE_FRAGMENT_BIT, fragShader));
+
+  // tell the pipeline about vertex buffers and shit
+  pipelineBuilder.vertexInputInfo = vkinit::vertexInputStateCreateInfo();
+  // tell the pipeline how to put verts together
+  pipelineBuilder.inputAssembly =
+      vkinit::inputAssemblyCreateInfo(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+
+  // build the viewport
+  pipelineBuilder.viewport.x        = 0.0f;
+  pipelineBuilder.viewport.y        = 0.0f;
+  pipelineBuilder.viewport.width    = (float)windowExtent.width;
+  pipelineBuilder.viewport.height   = (float)windowExtent.height;
+  pipelineBuilder.viewport.minDepth = 0.0f;
+  pipelineBuilder.viewport.maxDepth = 0.0f;
+
+  // build the scissor (this one does nothing)
+  pipelineBuilder.scissor.offset = {0, 0};
+  pipelineBuilder.scissor.extent = windowExtent;
+
+  // build the rasterizer
+  pipelineBuilder.rasterizer = vkinit::rasterizationStateCreateInfo(VK_POLYGON_MODE_FILL);
+
+  // no multisampling
+  pipelineBuilder.multisampling = vkinit::multisampleStateCreateInfo();
+  // no blending
+  pipelineBuilder.colorBlendAttachment = vkinit::colorBlendAttachmentState();
+
+  // attach the layout
+  pipelineBuilder.pipelineLayout = pipelineLayout;
+
+  renderPipeline = pipelineBuilder.buildPipeline(device, renderPass);
+
+  // destroy the shader modules, as we don't need them once the pipeline is created
+  vkDestroyShaderModule(device, fragShader, nullptr);
+  vkDestroyShaderModule(device, vertShader, nullptr);
 }
 
 //-----------------------------------------------------------------------

@@ -1,4 +1,5 @@
 #pragma once
+#include "pipeline_builder.h"
 #include "vk_initializers.h"
 #include "vk_types.h"
 
@@ -47,6 +48,11 @@ public:
   VkSemaphore renderSemaphore;
 
   VkFence renderFence;
+
+  VkPipelineLayout pipelineLayout;
+
+  VkPipeline renderPipeline;
+
   // indices of the queue families, which send out commands from their respective queues
   // each queue family can only submit one type of command, so we need multiple queues.
   struct QueueFamilyIndices {
@@ -73,14 +79,17 @@ public:
       VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
   bool isInitialized{false};
+  bool framebufferResized{false};
 
   int frameNumber{0};
+
+  int selectedShader{0};
 
   size_t currentFrame = 0;
 
   const int MAX_FRAMES_IN_FLIGHT{2};
 
-  VkExtent2D windowExtent{1700, 900};
+  VkExtent2D windowExtent{800, 600};
 
   // nifty forward declaration shit
   struct SDL_Window *window{nullptr};
@@ -131,6 +140,9 @@ private:
   bool loadShaderModule(const char *filePath, VkShaderModule *outShaderModule);
 
   void createPipelines();
+
+  void cleanupSwapChain();
+  void recreateSwapChain();
   // HERE BE DEBUG DRAGONS
   //----------------------------------------------------------------
   bool checkValidationSupport();

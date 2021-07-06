@@ -53,9 +53,6 @@ void VulkanEngine::cleanup() {
   vkDeviceWaitIdle(device);
   // destroy all sync structures
 
-  vmaDestroyBuffer(allocator, triangleMesh.vertexBuffer.memBuffer,
-                   triangleMesh.vertexBuffer.allocation);
-
   vkDestroySemaphore(device, presentSemaphore, nullptr);
   vkDestroySemaphore(device, renderSemaphore, nullptr);
   vkDestroyFence(device, renderFence, nullptr);
@@ -148,6 +145,7 @@ void VulkanEngine::draw() {
   rpInfo.renderArea.offset.x = 0;
   rpInfo.renderArea.offset.y = 0;
 
+  // tell it what area of screenspace to render to
   rpInfo.renderArea.extent = windowExtent;
 
   rpInfo.framebuffer = swapChainFramebuffers[swapChainImageIndex];
@@ -1017,50 +1015,6 @@ void VulkanEngine::createMemAllocator() {
   allocatorInfo.device         = device;
   allocatorInfo.instance       = instance;
   vmaCreateAllocator(&allocatorInfo, &allocator);
-}
-
-void VulkanEngine::loadMeshes() {
-  triangleMesh.vertices.resize(3);
-  triangleMesh.vertices[0].position = {1.f, 1.f, 0.0f};
-  triangleMesh.vertices[1].position = {-1.f, 1.f, 0.0f};
-  triangleMesh.vertices[2].position = {0.f, -1.f, 0.0f};
-
-  // vertex colors
-  triangleMesh.vertices[0].color = {1.f, 0.f, 0.0f};
-  triangleMesh.vertices[1].color = {0.f, 1.f, 0.0f};
-  triangleMesh.vertices[2].color = {0.f, 0.f, 1.0f};
-
-  // we don't care about the vertex normals
-
-  uploadMesh(triangleMesh);
-}
-
-void VulkanEngine::uploadMesh(Mesh &mesh) {
-  // allocate a vertex buffer
-  VkBufferCreateInfo bufferInfo{};
-
-  bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-
-  // total size of the buffer we're allocating, in bytes
-  bufferInfo.size = mesh.vertices.size() * sizeof(Vertex);
-  // specify that its a vertex buffer
-  bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-
-  // tell the library that the data is writable by cpu, readable by gpu
-  VmaAllocationCreateInfo vmaAllocInfo{};
-  vmaAllocInfo.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
-
-  if (vmaCreateBuffer(allocator, &bufferInfo, &vmaAllocInfo, &mesh.vertexBuffer.memBuffer,
-                      &mesh.vertexBuffer.allocation, nullptr) != VK_SUCCESS) {
-    throw std::runtime_error("Failed to allocate vertex buffer!");
-  }
-
-  void *data;
-
-  vmaMapMemory(allocator, mesh.vertexBuffer.allocation, &data);
-  memcpy(data, mesh.vertices.data(), mesh.vertices.size() * sizeof(Vertex));
-
-  vmaUnmapMemory(allocator, mesh.vertexBuffer.allocation);
 }
 
 //-----------------------------------------------------------------------

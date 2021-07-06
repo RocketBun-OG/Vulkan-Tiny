@@ -51,14 +51,10 @@ public:
   VkFence renderFence;
 
   VkPipelineLayout pipelineLayout;
-  VkPipelineLayout meshPipelineLayout;
 
   VkPipeline renderPipeline;
-  VkPipeline meshPipeline;
 
   VmaAllocator allocator;
-
-  Mesh triangleMesh;
 
   // indices of the queue families, which send out commands from their respective queues
   // each queue family can only submit one type of command, so we need multiple queues.

@@ -784,9 +784,9 @@ void VulkanEngine::recreateSwapChain() {
 
   if (swapChainSupport.capabilities.currentExtent.width == 0 ||
       swapChainSupport.capabilities.currentExtent.height == 0) {
-    // SDL_MinimizeWindow(window);
-    // SDL_SetWindowSize(window,
-    // swapChainSupport.capabilities.currentExtent.width,swapChainSupport.capabilities.currentExtent.height);
+    // We have to make the window non-resizable so that it doesn't eat 10 pixels off each
+    // axis during un-minimization. Don't ask me why, I don't know.
+    SDL_SetWindowResizable(window, SDL_FALSE);
   }
 
   while (swapChainSupport.capabilities.currentExtent.width == 0 ||
@@ -813,6 +813,8 @@ void VulkanEngine::recreateSwapChain() {
   createFramebuffers();
   initCommands();
   createSyncStructures();
+
+  SDL_SetWindowResizable(window, SDL_TRUE);
 }
 //-----------------------------------------------------------------------
 

@@ -7,7 +7,9 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <fstream>
+#include <functional>
 #include <glm/glm.hpp>
 #include <iostream>
 #include <optional>

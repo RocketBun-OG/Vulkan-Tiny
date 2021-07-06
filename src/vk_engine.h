@@ -10,6 +10,31 @@ const bool enableValidationLayers = false;
 const bool enableValidationLayers = true;
 #endif
 
+// Struct for holding all the deletion functions for Vulkan objects
+struct DeletionQueue {
+  std::deque<std::function<void()>> deleters;
+  void pushFunction(std::function<void()> &&function) { deleters.push_back(function); }
+
+  // for every function in the deletion queue, run it, and then wipe it
+  void flush() {
+    for (auto it = deleters.rbegin(); it != deleters.rend(); it++) {
+      (*it)();
+    }
+    deleters.clear();
+  }
+};
+
+// Struct for holding objects for each frame in the swapchain
+struct FrameData {
+  VkSemaphore renderSemaphore, presentSemaphore;
+  VkFence renderFence;
+
+  VkCommandPool graphicsCommandPool, computeCommandPool;
+  VkCommandBuffer graphicsCommandBuffer, computeCommandBuffer;
+};
+
+constexpr unsigned int MAX_FRAMES_IN_FLIGHT = 2;
+
 class VulkanEngine {
 public:
   VkInstance instance;
@@ -26,32 +51,16 @@ public:
   VkDevice device;
 
   VkSwapchainKHR swapChain;
-
-  // vector full of images!
   std::vector<VkImage> swapChainImages;
-  // vector full of image views!
   std::vector<VkImageView> swapChainImageViews;
-  // vector full of framebuffers, one for each image
   std::vector<VkFramebuffer> swapChainFramebuffers;
 
   VkFormat swapChainImageFormat;
   VkExtent2D swapChainExtent;
 
-  VkCommandPool graphicalCommandPool;
-  VkCommandPool computeCommandPool;
-
-  VkCommandBuffer graphicalCommandBuffer;
-  VkCommandBuffer computeCommandBuffer;
-
   VkRenderPass renderPass;
 
-  VkSemaphore presentSemaphore;
-  VkSemaphore renderSemaphore;
-
-  VkFence renderFence;
-
   VkPipelineLayout pipelineLayout;
-
   VkPipeline renderPipeline;
 
   VmaAllocator allocator;
@@ -74,28 +83,22 @@ public:
     std::vector<VkSurfaceFormatKHR> formats;
     std::vector<VkPresentModeKHR> presentModes;
   };
-
-  struct MeshPushConstants {
-    glm::vec4 data;
-    glm::mat4 renderMatrix;
-  };
-
+  SwapChainSupportDetails swapChainSupport;
   // validation layer list
-  const std::vector<const char *> validationLayers = {"VK_LAYER_KHRONOS_validation"};
+  const std::vector<const char *> validationLayers = {"VK_LAYER_KHRONOS_validation",
+                                                      "VK_LAYER_LUNARG_monitor"};
   // necessary device extension list
   const std::vector<const char *> requiredDeviceExtensions = {
       VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
   bool isInitialized{false};
-  bool framebufferResized{false};
 
-  int frameNumber{0};
+  unsigned int frameNumber{0};
+  unsigned int selectedShader{0};
 
-  int selectedShader{0};
+  FrameData bufferFrames[MAX_FRAMES_IN_FLIGHT];
 
-  size_t currentFrame = 0;
-
-  const int MAX_FRAMES_IN_FLIGHT{2};
+  DeletionQueue mainDeletionQueue;
 
   // default window size.
   VkExtent2D windowExtent{800, 600};
@@ -117,19 +120,21 @@ public:
 private:
   void initVulkan();
 
+  // The functions here are ordered mostly in terms of when they're used in the chain
+
   std::vector<const char *> getRequiredExtensions();
   void createInstance();
 
   void createSurface();
-  // gpu selection functions
+  // GPU selection functions
   void pickPhysicalDevice();
   bool isDeviceSuitable(VkPhysicalDevice GPU);
   QueueFamilyIndices findQueueFamilies(VkPhysicalDevice GPU);
 
-  // logical device creation
+  // Logical device creation
   void createDevice();
 
-  // swapchain creation functions
+  // Swapchain creation functions
   void createSwapChain();
   SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice GPU);
   VkPresentModeKHR
@@ -140,24 +145,34 @@ private:
 
   void createImageViews();
 
+  // Command queue/buffer setup
   void initGraphicsCommands();
   void initComputeCommands();
   void initCommands();
 
+  // Set up for rendering
   void createRenderPass();
   void createFramebuffers();
   void createSyncStructures();
 
+  // Load shaders from SPIR-V into renderer modules
   bool loadShaderModule(const char *filePath, VkShaderModule *outShaderModule);
 
   void createPipelines();
 
+  // Returns the associated struct for the current frame, based on MAX_FRAMES_IN_FLIGHT
+  FrameData &getCurrentFrame();
+
+  // These are for resizes
   void cleanupSwapChain();
   void recreateSwapChain();
 
   void createMemAllocator();
+
+  // Not currently used
   void loadMeshes();
   void uploadMesh(Mesh &mesh);
+
   // HERE BE DEBUG DRAGONS
   //----------------------------------------------------------------
   bool checkValidationSupport();

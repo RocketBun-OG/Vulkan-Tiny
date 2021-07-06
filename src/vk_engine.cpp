@@ -11,7 +11,10 @@
 #define VMA_IMPLEMENTATION
 #include "vk_mem_alloc.h"
 
-// boot up the engine
+// PRIMARY FUNCTIONS
+//------------------------------------------------------------------------
+
+// Boot up the engine
 void VulkanEngine::init() {
 
   // Initialize SDL and make a window with it
@@ -29,8 +32,7 @@ void VulkanEngine::init() {
   isInitialized = true;
 }
 
-// FUNDAMENTAL FUNCTIONS
-//------------------------------------------------------------------------
+// Spin up a vulkan context complete with everything needed to render
 void VulkanEngine::initVulkan() {
   createInstance();
   createSurface();
@@ -47,62 +49,45 @@ void VulkanEngine::initVulkan() {
   createMemAllocator();
 }
 
-// TODO: refactor this to cleanup using the push stack thing
+// Cleans up all the objects when the application is closed
 void VulkanEngine::cleanup() {
 
-  vkDeviceWaitIdle(device);
-  // destroy all sync structures
+  // Clean up the objects, so long as they exist.
 
-  vkDestroySemaphore(device, presentSemaphore, nullptr);
-  vkDestroySemaphore(device, renderSemaphore, nullptr);
-  vkDestroyFence(device, renderFence, nullptr);
-
-  // destroy the command pools
-  vkDestroyCommandPool(device, graphicalCommandPool, nullptr);
-  vkDestroyCommandPool(device, computeCommandPool, nullptr);
-
-  // destroy framebuffers
-  for (auto framebuffer : swapChainFramebuffers) {
-    vkDestroyFramebuffer(device, framebuffer, nullptr);
-  }
-
-  vkDestroyPipeline(device, renderPipeline, nullptr);
-
-  vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
-  // destroy the render pass
-  vkDestroyRenderPass(device, renderPass, nullptr);
-
-  // destroy all image views
-  for (auto imageView : swapChainImageViews) {
-    vkDestroyImageView(device, imageView, nullptr);
-  }
-
-  // destroy swapchain
-  vkDestroySwapchainKHR(device, swapChain, nullptr);
-
-  // kill the logical device
-  vkDestroyDevice(device, nullptr);
-
-  // destroy the render surface
-  vkDestroySurfaceKHR(instance, displaySurface, nullptr);
-
-  // destroy the vulkan context
-  vkDestroyInstance(instance, nullptr);
-  // delete the window if it actually exists
   if (isInitialized) {
+    // Wait for the GPU To finish doing stuff before we rip all the objects away from it
+    vkDeviceWaitIdle(device);
+
+    // Destroy everything that we added to the deletion queue
+    mainDeletionQueue.flush();
+
+    // destroy the render surface
+    vkDestroySurfaceKHR(instance, displaySurface, nullptr);
+
+    // Destroy the logical device
+    vkDestroyDevice(device, nullptr);
+
+    // Destroy the vulkan context
+    vkDestroyInstance(instance, nullptr);
+
+    // Destroy the SDL window
     SDL_DestroyWindow(window);
   }
 }
 
-// TODO: make slightly less monolithic
+// Draw to the screen
 void VulkanEngine::draw() {
   // wait for the gpu to finish its work before starting to draw
-  vkWaitForFences(device, 1, &renderFence, true, UINT64_MAX);
-  vkResetFences(device, 1, &renderFence);
+  vkWaitForFences(device, 1, &getCurrentFrame().renderFence, true, UINT64_MAX);
+  vkResetFences(device, 1, &getCurrentFrame().renderFence);
+  // std::cerr << "\rthe current frame in flight is frame " << frameNumber %
+  // MAX_FRAMES_IN_FLIGHT << " and the overall frame count is " << frameNumber << ' ' <<
+  // std::flush;
 
   uint32_t swapChainImageIndex;
-  VkResult result = vkAcquireNextImageKHR(device, swapChain, UINT32_MAX, presentSemaphore,
-                                          nullptr, &swapChainImageIndex);
+  VkResult result = vkAcquireNextImageKHR(device, swapChain, UINT32_MAX,
+                                          getCurrentFrame().presentSemaphore, nullptr,
+                                          &swapChainImageIndex);
 
   if (result == VK_ERROR_OUT_OF_DATE_KHR) {
     recreateSwapChain();
@@ -112,12 +97,12 @@ void VulkanEngine::draw() {
   }
 
   // reset the command buffer so we can send new stuff to it
-  if (vkResetCommandBuffer(graphicalCommandBuffer, 0) != VK_SUCCESS) {
+  if (vkResetCommandBuffer(getCurrentFrame().graphicsCommandBuffer, 0) != VK_SUCCESS) {
     throw std::runtime_error("Failed to reset command buffer!");
   }
 
   // rename for less typing
-  VkCommandBuffer graphBuffer = graphicalCommandBuffer;
+  VkCommandBuffer graphBuffer = getCurrentFrame().graphicsCommandBuffer;
 
   // boot up the command buffer
   VkCommandBufferBeginInfo graphBeginInfo{};
@@ -178,15 +163,15 @@ void VulkanEngine::draw() {
   submit.pWaitDstStageMask = &waitStage;
 
   submit.waitSemaphoreCount = 1;
-  submit.pWaitSemaphores    = &presentSemaphore;
+  submit.pWaitSemaphores    = &getCurrentFrame().presentSemaphore;
 
   submit.signalSemaphoreCount = 1;
-  submit.pSignalSemaphores    = &renderSemaphore;
+  submit.pSignalSemaphores    = &getCurrentFrame().renderSemaphore;
 
   submit.commandBufferCount = 1;
   submit.pCommandBuffers    = &graphBuffer;
 
-  result = vkQueueSubmit(graphicsQueue, 1, &submit, renderFence);
+  result = vkQueueSubmit(graphicsQueue, 1, &submit, getCurrentFrame().renderFence);
 
   if (result != VK_SUCCESS) {
     throw std::runtime_error("Failed to submit image to queue!");
@@ -201,7 +186,7 @@ void VulkanEngine::draw() {
   presentInfo.pSwapchains    = &swapChain;
 
   presentInfo.waitSemaphoreCount = 1;
-  presentInfo.pWaitSemaphores    = &renderSemaphore;
+  presentInfo.pWaitSemaphores    = &getCurrentFrame().renderSemaphore;
 
   presentInfo.pImageIndices = &swapChainImageIndex;
 
@@ -219,6 +204,7 @@ void VulkanEngine::draw() {
   frameNumber++;
 }
 
+// Primary loop of the engine.
 void VulkanEngine::run() {
   SDL_Event e;
   bool bQuit = false;
@@ -254,7 +240,7 @@ void VulkanEngine::run() {
   }
 }
 
-// get the extensions we need for the app to run
+// Get the extensions we need for the app to run
 std::vector<const char *> VulkanEngine::getRequiredExtensions() {
 
   // get the extensions SDL needs
@@ -266,14 +252,14 @@ std::vector<const char *> VulkanEngine::getRequiredExtensions() {
   SDL_Vulkan_GetInstanceExtensions(window, &extensionCount, extensions.data());
 
   if (enableValidationLayers) {
-    // adds the debug utils layer to the end of the extensions list
+    // adds the validation layers to the list if we've enabled them
     extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
   }
 
   return extensions;
 }
 
-// create the vulkan context
+// Create the vulkan context
 void VulkanEngine::createInstance() {
   // if the validation layers are turned on, but aren't available on the system,
   // panic.
@@ -329,7 +315,7 @@ void VulkanEngine::createSurface() {
 
 // GPU SELECTION FUNCTIONS
 //------------------------------------------------------------------------
-// get the gpus on the system
+// Get the gpus on the system
 void VulkanEngine::pickPhysicalDevice() {
   // first, get a list of all the devices on the system.
   uint32_t deviceCount = 0;
@@ -353,7 +339,7 @@ void VulkanEngine::pickPhysicalDevice() {
   throw std::runtime_error("No device found that supports all extensions!");
 }
 
-// check to see if the GPU has all the features we require
+// Check to see if the GPU has all the features we require
 bool VulkanEngine::isDeviceSuitable(VkPhysicalDevice GPU) {
   // first, get the basic properties of the device
   VkPhysicalDeviceProperties deviceProperties;
@@ -413,7 +399,7 @@ bool VulkanEngine::isDeviceSuitable(VkPhysicalDevice GPU) {
          indices.isComplete() && indices.isComplete();
 }
 
-// check which queue families the device supports, and then mark down their indices
+// Check which queue families the device supports, and then mark down their indices
 VulkanEngine::QueueFamilyIndices VulkanEngine::findQueueFamilies(VkPhysicalDevice GPU) {
   QueueFamilyIndices indices;
 
@@ -456,7 +442,7 @@ VulkanEngine::QueueFamilyIndices VulkanEngine::findQueueFamilies(VkPhysicalDevic
 
 // COMMAND INITIALIZATION FUNCTIONS
 //------------------------------------------------------------------------
-// set up a command pool for graphical commands, complete with buffers
+// Set up command pools for graphical commands, complete with buffers
 void VulkanEngine::initGraphicsCommands() {
   QueueFamilyIndices queueFamilyIndices = findQueueFamilies(chosenGPU);
 
@@ -467,31 +453,37 @@ void VulkanEngine::initGraphicsCommands() {
   poolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily.value();
   poolInfo.flags            = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT; // optional
 
-  // final creation of command pool
-  if (vkCreateCommandPool(device, &poolInfo, nullptr, &graphicalCommandPool) !=
-      VK_SUCCESS) {
-    throw std::runtime_error("Failed to create command pool!");
-  }
+  // generate a command pool for each frame in the buffer
+  for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+    // final creation of command pool
+    if (vkCreateCommandPool(device, &poolInfo, nullptr,
+                            &bufferFrames[i].graphicsCommandPool) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to create command pool!");
+    }
 
-  // now attach a command buffer to it
-  VkCommandBufferAllocateInfo commandBufferInfo{};
-  commandBufferInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-  commandBufferInfo.pNext = nullptr;
+    // now attach a command buffer to it
+    VkCommandBufferAllocateInfo commandBufferInfo{};
+    commandBufferInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    commandBufferInfo.pNext = nullptr;
 
-  // tell the buffer which command pool it belongs to
-  commandBufferInfo.commandPool = graphicalCommandPool;
-  // allocate a single command buffer
-  commandBufferInfo.commandBufferCount = 1;
-  // command level is Primary
-  commandBufferInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    // tell the buffer which command pool it belongs to
+    commandBufferInfo.commandPool = bufferFrames[i].graphicsCommandPool;
+    // allocate a single command buffer
+    commandBufferInfo.commandBufferCount = 1;
+    // command level is Primary
+    commandBufferInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
 
-  if (vkAllocateCommandBuffers(device, &commandBufferInfo, &graphicalCommandBuffer) !=
-      VK_SUCCESS) {
-    throw std::runtime_error("Failed to allocate graphical command buffer!");
+    if (vkAllocateCommandBuffers(device, &commandBufferInfo,
+                                 &bufferFrames[i].graphicsCommandBuffer) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to allocate graphical command buffer!");
+    }
+    mainDeletionQueue.pushFunction([=]() {
+      vkDestroyCommandPool(device, bufferFrames[i].graphicsCommandPool, nullptr);
+    });
   }
 }
 
-// set up a command pool for compute commands, complete with buffers
+// Set up command pools for compute commands, complete with buffers.
 void VulkanEngine::initComputeCommands() {
   QueueFamilyIndices queueFamilyIndices = findQueueFamilies(chosenGPU);
 
@@ -502,30 +494,36 @@ void VulkanEngine::initComputeCommands() {
   poolInfo.queueFamilyIndex = queueFamilyIndices.computeFamily.value();
   poolInfo.flags            = 0; // optional
 
-  // final creation of command pool
-  if (vkCreateCommandPool(device, &poolInfo, nullptr, &computeCommandPool) !=
-      VK_SUCCESS) {
-    throw std::runtime_error("Failed to create command pool!");
-  }
+  for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+    // final creation of command pool
+    if (vkCreateCommandPool(device, &poolInfo, nullptr,
+                            &bufferFrames[i].computeCommandPool) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to create command pool!");
+    }
 
-  // now attach a command buffer to it
-  VkCommandBufferAllocateInfo commandBufferInfo{};
-  commandBufferInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-  commandBufferInfo.pNext = nullptr;
+    // now attach a command buffer to it
+    VkCommandBufferAllocateInfo commandBufferInfo{};
+    commandBufferInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    commandBufferInfo.pNext = nullptr;
 
-  // tell the buffer which command pool it belongs to
-  commandBufferInfo.commandPool = computeCommandPool;
-  // allocate a single command buffer
-  commandBufferInfo.commandBufferCount = 1;
-  // command level is Primary
-  commandBufferInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    // tell the buffer which command pool it belongs to
+    commandBufferInfo.commandPool = bufferFrames[i].computeCommandPool;
+    // allocate a single command buffer
+    commandBufferInfo.commandBufferCount = 1;
+    // command level is Primary
+    commandBufferInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
 
-  if (vkAllocateCommandBuffers(device, &commandBufferInfo, &computeCommandBuffer) !=
-      VK_SUCCESS) {
-    throw std::runtime_error("Failed to allocate graphical command buffer!");
+    if (vkAllocateCommandBuffers(device, &commandBufferInfo,
+                                 &bufferFrames[i].computeCommandBuffer) != VK_SUCCESS) {
+      throw std::runtime_error("Failed to allocate graphical command buffer!");
+    }
+    mainDeletionQueue.pushFunction([=]() {
+      vkDestroyCommandPool(device, bufferFrames[i].computeCommandPool, nullptr);
+    });
   }
 }
 
+// Just calls the above two functions
 void VulkanEngine::initCommands() {
   initGraphicsCommands();
   initComputeCommands();
@@ -603,7 +601,7 @@ void VulkanEngine::createDevice() {
 
 // SWAPCHAIN CREATION FUNCTIONS
 //-----------------------------------------------------------------------
-// see if the GPU has minimum support for our swapchain
+// See if the GPU has minimum support for our swapchain
 VulkanEngine::SwapChainSupportDetails
 VulkanEngine::querySwapChainSupport(VkPhysicalDevice GPU) {
 
@@ -634,7 +632,7 @@ VulkanEngine::querySwapChainSupport(VkPhysicalDevice GPU) {
   return details;
 }
 
-// choose the surface color output format. Basically, pick a colorspace.
+// Choose the surface color output format. Basically, pick a colorspace.
 VkSurfaceFormatKHR VulkanEngine::chooseSwapSurfaceFormat(
     const std::vector<VkSurfaceFormatKHR> &availableFormats) {
   for (const auto &availableFormat : availableFormats) {
@@ -647,7 +645,7 @@ VkSurfaceFormatKHR VulkanEngine::chooseSwapSurfaceFormat(
   return availableFormats[0];
 }
 
-// choose the vsync/present mode. see obsidian note "Vulkan present modes" for
+// Choose the vsync/present mode. see obsidian note "Vulkan present modes" for
 // details.
 VkPresentModeKHR VulkanEngine::chooseSwapPresentMode(
     const std::vector<VkPresentModeKHR> &availablePresentModes) {
@@ -662,7 +660,7 @@ VkPresentModeKHR VulkanEngine::chooseSwapPresentMode(
   return VK_PRESENT_MODE_FIFO_KHR;
 }
 
-// set the resolution of the swapchain images, in pixels
+// Set the resolution of the swapchain images, in pixels
 VkExtent2D VulkanEngine::chooseSwapExtent(const VkSurfaceCapabilitiesKHR &capabilities) {
 
   if (capabilities.currentExtent.width != UINT32_MAX) {
@@ -685,9 +683,10 @@ VkExtent2D VulkanEngine::chooseSwapExtent(const VkSurfaceCapabilitiesKHR &capabi
   }
 }
 
+// Build the swapchain
 void VulkanEngine::createSwapChain() {
 
-  SwapChainSupportDetails swapChainSupport = querySwapChainSupport(chosenGPU);
+  swapChainSupport = querySwapChainSupport(chosenGPU);
   // minimum amount of images the swapchain needs to function, +1 to avoid
   // driver hangups
   uint32_t imageCount = swapChainSupport.capabilities.minImageCount + 1;
@@ -763,41 +762,47 @@ void VulkanEngine::createSwapChain() {
   // store the format and extent for later
   swapChainImageFormat = surfaceFormat.format;
   swapChainExtent      = extent;
+
+  // add the swapchain to the deletion queue
+  mainDeletionQueue.pushFunction(
+      [=]() { vkDestroySwapchainKHR(device, swapChain, nullptr); });
 }
 
-void VulkanEngine::cleanupSwapChain() {
-  // destroy framebuffers
-  for (auto framebuffer : swapChainFramebuffers) {
-    vkDestroyFramebuffer(device, framebuffer, nullptr);
-  }
+// Wipe out the swapchain and its associated objects so we can rebuild it
+void VulkanEngine::cleanupSwapChain() { mainDeletionQueue.flush(); }
 
-  vkDestroyCommandPool(device, graphicalCommandPool, nullptr);
-  vkDestroyCommandPool(device, computeCommandPool, nullptr);
-
-  vkDestroyPipeline(device, renderPipeline, nullptr);
-  vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
-  // destroy the render pass
-  vkDestroyRenderPass(device, renderPass, nullptr);
-
-  // destroy all image views
-  for (auto imageView : swapChainImageViews) {
-    vkDestroyImageView(device, imageView, nullptr);
-  }
-  vkDestroySwapchainKHR(device, swapChain, nullptr);
-}
-
+// Rebuild the swapchain. Called when the window is resized or minimized.
 void VulkanEngine::recreateSwapChain() {
-
+  SDL_Event e;
   vkDeviceWaitIdle(device);
 
   // first set the new resolution of the window, so the swapchain doesn't get confused
-  int windowX{};
-  int windowY{};
-  SDL_GetWindowSize(window, &windowX, &windowY);
-  windowExtent.width  = static_cast<uint32_t>(windowX);
-  windowExtent.height = static_cast<uint32_t>(windowY);
-  std::cout << "window has been resized to " << windowX << " wide and " << windowY
-            << " tall\n";
+  int width, height;
+
+  vkGetPhysicalDeviceSurfaceCapabilitiesKHR(chosenGPU, displaySurface,
+                                            &swapChainSupport.capabilities);
+
+  if (swapChainSupport.capabilities.currentExtent.width == 0 ||
+      swapChainSupport.capabilities.currentExtent.height == 0) {
+    // SDL_MinimizeWindow(window);
+    // SDL_SetWindowSize(window,
+    // swapChainSupport.capabilities.currentExtent.width,swapChainSupport.capabilities.currentExtent.height);
+  }
+
+  while (swapChainSupport.capabilities.currentExtent.width == 0 ||
+         swapChainSupport.capabilities.currentExtent.height == 0) {
+    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(chosenGPU, displaySurface,
+                                              &swapChainSupport.capabilities);
+    SDL_WaitEvent(&e);
+  }
+
+  windowExtent.width =
+      static_cast<uint32_t>(swapChainSupport.capabilities.currentExtent.width);
+  windowExtent.height =
+      static_cast<uint32_t>(swapChainSupport.capabilities.currentExtent.height);
+
+  // std::cout << "window has been resized to " << windowX << " wide and " << windowY << "
+  // tall\n";
 
   cleanupSwapChain();
 
@@ -807,12 +812,13 @@ void VulkanEngine::recreateSwapChain() {
   createPipelines();
   createFramebuffers();
   initCommands();
+  createSyncStructures();
 }
 //-----------------------------------------------------------------------
 
 // PIPELINE SETUP FUNCTIONS
 //-----------------------------------------------------------------------
-// tell the vulkan context how to look at the images we make
+// Tell the vulkan context how to look at the images we make
 void VulkanEngine::createImageViews() {
   // make the imageviews list as big as the actual swapchain
   swapChainImageViews.resize(swapChainImages.size());
@@ -843,9 +849,12 @@ void VulkanEngine::createImageViews() {
         VK_SUCCESS) {
       throw std::runtime_error("Failed to create image views!");
     }
+    mainDeletionQueue.pushFunction(
+        [=]() { vkDestroyImageView(device, swapChainImageViews[i], nullptr); });
   }
 }
 
+// Create a render pass
 void VulkanEngine::createRenderPass() {
   // an attachment is basically a render target
   VkAttachmentDescription colorAttachment{};
@@ -890,8 +899,12 @@ void VulkanEngine::createRenderPass() {
   if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS) {
     throw std::runtime_error("Failed to create render pass!");
   }
+
+  mainDeletionQueue.pushFunction(
+      [=]() { vkDestroyRenderPass(device, renderPass, nullptr); });
 }
 
+// Create framebuffers to put data into
 void VulkanEngine::createFramebuffers() {
   // make as many framebuffers as there are images
   VkFramebufferCreateInfo fbInfo{};
@@ -913,9 +926,12 @@ void VulkanEngine::createFramebuffers() {
         VK_SUCCESS) {
       throw std::runtime_error("Failed to create framebuffer!");
     }
+
+    mainDeletionQueue.pushFunction(
+        [=]() { vkDestroyFramebuffer(device, swapChainFramebuffers[i], nullptr); });
   }
 }
-
+// Make semaphores and fences for each frame in the swapchain
 void VulkanEngine::createSyncStructures() {
   // resize the semaphore vectors to the amount of concurrent frames possible
 
@@ -930,14 +946,27 @@ void VulkanEngine::createSyncStructures() {
   // turn the fence on by default so rendering can actually start.
   fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
-  vkCreateFence(device, &fenceInfo, nullptr, &renderFence);
-  // make semaphores for image availability and render status, and make fences for cpu-gpu
-  // sync.
+  // make fences and semaphores for each frame in the buffer
+  for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+    vkCreateFence(device, &fenceInfo, nullptr, &bufferFrames[i].renderFence);
+    // make semaphores for image availability and render status, and make fences for
+    // cpu-gpu sync.
 
-  vkCreateSemaphore(device, &semaphoreInfo, nullptr, &presentSemaphore);
-  vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderSemaphore);
+    vkCreateSemaphore(device, &semaphoreInfo, nullptr, &bufferFrames[i].presentSemaphore);
+    vkCreateSemaphore(device, &semaphoreInfo, nullptr, &bufferFrames[i].renderSemaphore);
+
+    mainDeletionQueue.pushFunction(
+        [=]() { vkDestroyFence(device, bufferFrames[i].renderFence, nullptr); });
+
+    mainDeletionQueue.pushFunction(
+        [=]() { vkDestroySemaphore(device, bufferFrames[i].presentSemaphore, nullptr); });
+
+    mainDeletionQueue.pushFunction(
+        [=]() { vkDestroySemaphore(device, bufferFrames[i].renderSemaphore, nullptr); });
+  }
 }
 
+// Set up the graphics pipeline(s)
 void VulkanEngine::createPipelines() {
   VkShaderModule fragShader;
   if (!loadShaderModule("shaders/shader.frag.spv", &fragShader)) {
@@ -1002,6 +1031,11 @@ void VulkanEngine::createPipelines() {
   // destroy the shader modules, as we don't need them once the pipeline is created
   vkDestroyShaderModule(device, fragShader, nullptr);
   vkDestroyShaderModule(device, vertShader, nullptr);
+
+  mainDeletionQueue.pushFunction(
+      [=]() { vkDestroyPipeline(device, renderPipeline, nullptr); });
+  mainDeletionQueue.pushFunction(
+      [=]() { vkDestroyPipelineLayout(device, pipelineLayout, nullptr); });
 }
 
 //-----------------------------------------------------------------------
@@ -1015,6 +1049,10 @@ void VulkanEngine::createMemAllocator() {
   allocatorInfo.device         = device;
   allocatorInfo.instance       = instance;
   vmaCreateAllocator(&allocatorInfo, &allocator);
+}
+
+FrameData &VulkanEngine::getCurrentFrame() {
+  return bufferFrames[frameNumber % MAX_FRAMES_IN_FLIGHT];
 }
 
 //-----------------------------------------------------------------------

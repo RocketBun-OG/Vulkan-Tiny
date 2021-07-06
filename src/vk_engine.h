@@ -1,4 +1,5 @@
 #pragma once
+#include "mesh.h"
 #include "pipeline_builder.h"
 #include "vk_initializers.h"
 #include "vk_types.h"
@@ -50,8 +51,14 @@ public:
   VkFence renderFence;
 
   VkPipelineLayout pipelineLayout;
+  VkPipelineLayout meshPipelineLayout;
 
   VkPipeline renderPipeline;
+  VkPipeline meshPipeline;
+
+  VmaAllocator allocator;
+
+  Mesh triangleMesh;
 
   // indices of the queue families, which send out commands from their respective queues
   // each queue family can only submit one type of command, so we need multiple queues.
@@ -72,6 +79,11 @@ public:
     std::vector<VkPresentModeKHR> presentModes;
   };
 
+  struct MeshPushConstants {
+    glm::vec4 data;
+    glm::mat4 renderMatrix;
+  };
+
   // validation layer list
   const std::vector<const char *> validationLayers = {"VK_LAYER_KHRONOS_validation"};
   // necessary device extension list
@@ -89,7 +101,10 @@ public:
 
   const int MAX_FRAMES_IN_FLIGHT{2};
 
+  // default window size.
   VkExtent2D windowExtent{800, 600};
+
+  glm::vec3 camPos{0.f, 0.f, -3.f};
 
   // nifty forward declaration shit
   struct SDL_Window *window{nullptr};
@@ -143,6 +158,10 @@ private:
 
   void cleanupSwapChain();
   void recreateSwapChain();
+
+  void createMemAllocator();
+  void loadMeshes();
+  void uploadMesh(Mesh &mesh);
   // HERE BE DEBUG DRAGONS
   //----------------------------------------------------------------
   bool checkValidationSupport();

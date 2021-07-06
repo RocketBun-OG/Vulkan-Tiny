@@ -6,6 +6,11 @@
 #include "vk_initializers.h"
 #include "vk_types.h"
 
+#include <glm/gtx/transform.hpp>
+
+#define VMA_IMPLEMENTATION
+#include "vk_mem_alloc.h"
+
 // boot up the engine
 void VulkanEngine::init() {
 
@@ -38,12 +43,18 @@ void VulkanEngine::initVulkan() {
   createFramebuffers();
   createSyncStructures();
   createPipelines();
+
+  createMemAllocator();
 }
 
+// TODO: refactor this to cleanup using the push stack thing
 void VulkanEngine::cleanup() {
 
   vkDeviceWaitIdle(device);
   // destroy all sync structures
+
+  vmaDestroyBuffer(allocator, triangleMesh.vertexBuffer.memBuffer,
+                   triangleMesh.vertexBuffer.allocation);
 
   vkDestroySemaphore(device, presentSemaphore, nullptr);
   vkDestroySemaphore(device, renderSemaphore, nullptr);
@@ -57,7 +68,9 @@ void VulkanEngine::cleanup() {
   for (auto framebuffer : swapChainFramebuffers) {
     vkDestroyFramebuffer(device, framebuffer, nullptr);
   }
+
   vkDestroyPipeline(device, renderPipeline, nullptr);
+
   vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
   // destroy the render pass
   vkDestroyRenderPass(device, renderPass, nullptr);
@@ -94,7 +107,12 @@ void VulkanEngine::draw() {
   VkResult result = vkAcquireNextImageKHR(device, swapChain, UINT32_MAX, presentSemaphore,
                                           nullptr, &swapChainImageIndex);
 
-  
+  if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+    recreateSwapChain();
+    return;
+  } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
+    throw std::runtime_error("Failed to acquire next image!");
+  }
 
   // reset the command buffer so we can send new stuff to it
   if (vkResetCommandBuffer(graphicalCommandBuffer, 0) != VK_SUCCESS) {
@@ -189,8 +207,14 @@ void VulkanEngine::draw() {
 
   presentInfo.pImageIndices = &swapChainImageIndex;
 
-  if (vkQueuePresentKHR(graphicsQueue, &presentInfo) != VK_SUCCESS) {
-    throw std::runtime_error("Failed to present image to screen!");
+  result = vkQueuePresentKHR(graphicsQueue, &presentInfo);
+
+  if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
+
+    recreateSwapChain();
+
+  } else if (result != VK_SUCCESS) {
+    throw std::runtime_error("Failed to present swapchain image!");
   }
 
   // increment number of frames since start.
@@ -208,8 +232,23 @@ void VulkanEngine::run() {
     // ask SDL for everything that's happened since the last frame
     while (SDL_PollEvent(&e) != 0) {
       // if you hit  the x button, close the damn window
-      if (e.type == SDL_QUIT)
+      if (e.type == SDL_QUIT) {
         bQuit = true;
+      }
+      if (e.type == SDL_KEYDOWN) {
+        if (e.key.keysym.sym == SDLK_a) {
+          camPos[0] += .05;
+        }
+        if (e.key.keysym.sym == SDLK_d) {
+          camPos[0] -= .05;
+        }
+        if (e.key.keysym.sym == SDLK_w) {
+          camPos[2] += .05;
+        }
+        if (e.key.keysym.sym == SDLK_s) {
+          camPos[2] -= .05;
+        }
+      }
     }
 
     // then draw the picture
@@ -286,6 +325,7 @@ void VulkanEngine::createSurface() {
   if (SDL_Vulkan_CreateSurface(window, instance, &displaySurface) != SDL_TRUE) {
     std::cout << "can't create surface!";
   };
+  SDL_SetWindowResizable(window, SDL_TRUE);
 }
 //------------------------------------------------------------------------
 
@@ -732,8 +772,9 @@ void VulkanEngine::cleanupSwapChain() {
   for (auto framebuffer : swapChainFramebuffers) {
     vkDestroyFramebuffer(device, framebuffer, nullptr);
   }
-  vkFreeCommandBuffers(device, graphicalCommandPool, 1, &graphicalCommandBuffer);
-  vkFreeCommandBuffers(device, computeCommandPool, 1, &computeCommandBuffer);
+
+  vkDestroyCommandPool(device, graphicalCommandPool, nullptr);
+  vkDestroyCommandPool(device, computeCommandPool, nullptr);
 
   vkDestroyPipeline(device, renderPipeline, nullptr);
   vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
@@ -750,6 +791,15 @@ void VulkanEngine::cleanupSwapChain() {
 void VulkanEngine::recreateSwapChain() {
 
   vkDeviceWaitIdle(device);
+
+  // first set the new resolution of the window, so the swapchain doesn't get confused
+  int windowX{};
+  int windowY{};
+  SDL_GetWindowSize(window, &windowX, &windowY);
+  windowExtent.width  = static_cast<uint32_t>(windowX);
+  windowExtent.height = static_cast<uint32_t>(windowY);
+  std::cout << "window has been resized to " << windowX << " wide and " << windowY
+            << " tall\n";
 
   cleanupSwapChain();
 
@@ -954,6 +1004,63 @@ void VulkanEngine::createPipelines() {
   // destroy the shader modules, as we don't need them once the pipeline is created
   vkDestroyShaderModule(device, fragShader, nullptr);
   vkDestroyShaderModule(device, vertShader, nullptr);
+}
+
+//-----------------------------------------------------------------------
+
+// BUFFER STUFF
+//-----------------------------------------------------------------------
+// initialize the memory manager
+void VulkanEngine::createMemAllocator() {
+  VmaAllocatorCreateInfo allocatorInfo{};
+  allocatorInfo.physicalDevice = chosenGPU;
+  allocatorInfo.device         = device;
+  allocatorInfo.instance       = instance;
+  vmaCreateAllocator(&allocatorInfo, &allocator);
+}
+
+void VulkanEngine::loadMeshes() {
+  triangleMesh.vertices.resize(3);
+  triangleMesh.vertices[0].position = {1.f, 1.f, 0.0f};
+  triangleMesh.vertices[1].position = {-1.f, 1.f, 0.0f};
+  triangleMesh.vertices[2].position = {0.f, -1.f, 0.0f};
+
+  // vertex colors
+  triangleMesh.vertices[0].color = {1.f, 0.f, 0.0f};
+  triangleMesh.vertices[1].color = {0.f, 1.f, 0.0f};
+  triangleMesh.vertices[2].color = {0.f, 0.f, 1.0f};
+
+  // we don't care about the vertex normals
+
+  uploadMesh(triangleMesh);
+}
+
+void VulkanEngine::uploadMesh(Mesh &mesh) {
+  // allocate a vertex buffer
+  VkBufferCreateInfo bufferInfo{};
+
+  bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+
+  // total size of the buffer we're allocating, in bytes
+  bufferInfo.size = mesh.vertices.size() * sizeof(Vertex);
+  // specify that its a vertex buffer
+  bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+
+  // tell the library that the data is writable by cpu, readable by gpu
+  VmaAllocationCreateInfo vmaAllocInfo{};
+  vmaAllocInfo.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+
+  if (vmaCreateBuffer(allocator, &bufferInfo, &vmaAllocInfo, &mesh.vertexBuffer.memBuffer,
+                      &mesh.vertexBuffer.allocation, nullptr) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to allocate vertex buffer!");
+  }
+
+  void *data;
+
+  vmaMapMemory(allocator, mesh.vertexBuffer.allocation, &data);
+  memcpy(data, mesh.vertices.data(), mesh.vertices.size() * sizeof(Vertex));
+
+  vmaUnmapMemory(allocator, mesh.vertexBuffer.allocation);
 }
 
 //-----------------------------------------------------------------------

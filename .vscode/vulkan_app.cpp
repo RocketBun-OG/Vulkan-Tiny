@@ -412,7 +412,7 @@ void vulkan_app::createGraphicsPipeline() {
   rasterizer.lineWidth = 1.0f;
 
   // enable backface culling
-  rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+  rasterizer.cullMode = VK_CULL_MODE_NONE;
   // determines vertex order that makes something front-facing
   rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
 
